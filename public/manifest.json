@@ -1,0 +1,11 @@
+{
+  "manifest_version": 3,
+  "name": "Minimal Manifest",
+  "version": "1.0.0",
+  "description": "auto apply to job app",
+  "action":{
+    "default_popup": "index.html"
+  },
+  "permissions": ["storage", "activeTab", "scripting", "tabs"],
+  "host_permissions": ["https://*/*", "http://*/*"]
+}
