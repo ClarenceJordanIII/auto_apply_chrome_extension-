@@ -1,25 +1,25 @@
-import { useState, useEffect } from "react";
-import {get_current_tab} from "./utils/currenttab"
+// import { useState, useEffect } from "react";
+// import {get_current_tab} from "./utils/currenttab"
 import "./app.css";
-
+import Indded from "./screens/IndeedWorkflow/Indded";
 export function App() {
-  const [url, setUrl] = useState<string | undefined | void>(undefined);
+  // const [url, setUrl] = useState<string | undefined | void>(undefined);
   
-  useEffect(() => {
-    const fetchData = async () => {
-      const currentTab: string | undefined = await get_current_tab();
-      setUrl(currentTab);
-    };
+  // useEffect(() => {
+  //   const fetchData = async () => {
+  //     const currentTab: string | undefined = await get_current_tab();
+  //     setUrl(currentTab);
+  //   };
     
-    fetchData();
+  //   fetchData();
    
-  }, []);
+  // }, []);
 
   return (
     <>
 
     
-      <h1 class="text-3xl font-bold underline">Hello world! {url}</h1>
+    <Indded/>
       
     </>
   );
