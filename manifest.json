@@ -1,0 +1,37 @@
+{
+  "manifest_version": 3,
+  "name": "Job Auto Apply Extension",
+  "version": "1.0.0",
+  "description": "Scrapes job listings and automates actions",
+  
+  "action": {
+    "default_popup": "index.html"
+
+  },
+
+  "permissions": [
+    "storage",
+    "scripting",
+    "activeTab",
+    "tabs"
+  ],
+
+  "host_permissions": [
+    "https://*.indeed.com/*",
+    "http://*/*"
+  ],
+
+  "background": {
+    "service_worker": "background.js"  
+  },
+
+  "content_scripts": [
+    {
+      "matches": ["https://*.indeed.com/*"],
+      "js": ["content.js"],
+      "run_at": "document_idle"
+    }
+  ]
+
+
+}
