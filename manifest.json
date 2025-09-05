@@ -3,35 +3,24 @@
   "name": "Job Auto Apply Extension",
   "version": "1.0.0",
   "description": "Scrapes job listings and automates actions",
-  
+
   "action": {
     "default_popup": "index.html"
-
   },
 
-  "permissions": [
-    "storage",
-    "scripting",
-    "activeTab",
-    "tabs"
-  ],
+  "permissions": ["storage", "scripting", "activeTab", "tabs"],
 
-  "host_permissions": [
-    "https://*.indeed.com/*",
-    "http://*/*"
-  ],
+  "host_permissions": ["http://*/*", "http://*/*"],
 
   "background": {
-    "service_worker": "background.js"  
+    "service_worker": "background.js"
   },
 
   "content_scripts": [
     {
-      "matches": ["https://*.indeed.com/*"],
+      "matches": ["<all_urls>"],
       "js": ["content.js"],
       "run_at": "document_idle"
     }
   ]
-
-
 }
