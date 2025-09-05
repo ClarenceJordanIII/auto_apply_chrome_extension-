@@ -15,6 +15,9 @@ startScriptButton()
 
 // non searching page
 const getJobCards = document.getElementById("mosaic-provider-jobcards-1")
+// searching page 
+const searchJobCards = document.getElementById("mosaic-jobResults")
+// make conditional to check which page we are on
 const btn = document.getElementById("startbtn")
 btn.addEventListener("click", () => {
     // Log the job cards container
@@ -47,7 +50,6 @@ btn.addEventListener("click", () => {
 
 // searching page logic 
 // mosaic-jobResults search id
-
 
 
 });
