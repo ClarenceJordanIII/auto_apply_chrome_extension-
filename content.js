@@ -23,7 +23,12 @@ const startIndeed = () => {
       jobCardScrape(getJobCards);
     } else if (searchJobCards) {
       // if they search for a job (scrapes the search results page)
-      jobCardScrape(searchJobCards);
+      // jobCardScrape(searchJobCards);
+          
+      autoScrollToBottom(() => {
+        console.log("You have hit the bottom of the webpage!");
+        jobCardScrape(searchJobCards);
+      });
     }
   });
 
@@ -36,7 +41,7 @@ function indeedMain() {
     const checkExist = setInterval(() => {
       if (document.getElementById("MosaicProviderRichSearchDaemon")) {
         clearInterval(checkExist);
-        resolve();
+         resolve();
       }
     }, 100);
   })
@@ -109,3 +114,21 @@ const startScriptButton = () => {
   startbtn.id = "startbtn";
   searchForm.appendChild(startbtn);
 };
+
+function autoScrollToBottom(callback) {
+  let lastScrollTop = -1;
+  function scrollStep() {
+    window.scrollBy(0, 100);
+    const scrollTop = window.scrollY;
+    const windowHeight = window.innerHeight;
+    const documentHeight = document.body.offsetHeight;
+    if (scrollTop + windowHeight >= documentHeight - 5 || scrollTop === lastScrollTop) {
+      // At bottom or can't scroll further
+      if (typeof callback === "function") callback();
+      return;
+    }
+    lastScrollTop = scrollTop;
+    setTimeout(scrollStep, 80);
+  }
+  scrollStep();
+}
