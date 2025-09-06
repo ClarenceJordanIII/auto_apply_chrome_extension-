@@ -60,36 +60,9 @@ setTimeout(() => {
 // sgets job card data
 // ...existing code...
 const jobCardScrape = async (getJobCards) => {
-  let hasNext = true;
-  while (hasNext) {
-    // Scrape and collect each page's data
-    const jobs = scrapePage(getJobCards);
-    // Log the jobs for this page (simulate sending to backend)
-    console.log('Page jobs:', jobs);
-
-    // Find the "Next Page" button
-    const nextPageBtn = document.querySelector('a[aria-label="Next Page"]');
-    if (!nextPageBtn) {
-      hasNext = false; // No more pages
-      break;
-    }
-
-    nextPageBtn.click();
-
-    // Wait for the page to load new job cards
-    await new Promise((resolve) => {
-      const checkExist = setInterval(() => {
-        // Wait for job cards container to update
-        if (document.getElementById("MosaicProviderRichSearchDaemon")) {
-          clearInterval(checkExist);
-          resolve();
-        }
-      }, 100);
-    });
-
-    // Wait a bit for the page to settle/render
-    await new Promise((r) => setTimeout(r, 2000));
-  }
+  console.log('Starting jobCardScrape...');
+  const jobs = scrapePage(getJobCards);
+  console.log('Current page jobs:', jobs);
 };
 // ...existing code...
 const startScriptButton = () => {
@@ -109,9 +82,14 @@ const startScriptButton = () => {
 };
 
 const scrapePage = (getJobCards) => {
+  console.log('scrapePage called...');
   const jobCards = getJobCards?.querySelectorAll("ul > li");
+  if (!jobCards) {
+    console.log('No job cards found on this page.');
+    return [];
+  }
   const jobs = [];
-  jobCards?.forEach((card) => {
+  jobCards.forEach((card, idx) => {
     // Get job title
     const jobTitle = card.querySelector("h2.jobTitle span")?.textContent?.trim() || null;
     // Get company name
@@ -124,8 +102,9 @@ const scrapePage = (getJobCards) => {
     const jobLinkEl = card.querySelector("h2.jobTitle a");
     const jobLink = jobLinkEl?.href || null;
     const jobId = jobLinkEl?.getAttribute("data-jk") || jobLinkEl?.id || null;
-
-    if ([jobTitle, companyName, location, companyDesc, jobLink, jobId].some((val) => val === null || val === undefined)) {
+    const jobType = card.querySelector('[data-testid="indeedApply"]')?.textContent?.trim() || null;
+    if ([jobTitle, companyName, location, companyDesc, jobLink, jobId,jobType].some((val) => val === null || val === undefined)) {
+      console.log(`Skipping incomplete job card at index ${idx}.`);
       return;
     }
     jobs.push({
@@ -135,8 +114,11 @@ const scrapePage = (getJobCards) => {
       companyDesc,
       jobLink,
       jobId,
+      jobType
     });
+    console.log(`Job card ${idx} scraped:`, jobs[jobs.length - 1]);
   });
+  console.log(`scrapePage finished. ${jobs.length} jobs found.`);
   return jobs;
 };
 
