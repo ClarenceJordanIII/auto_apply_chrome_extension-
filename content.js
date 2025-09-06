@@ -24,7 +24,7 @@ const startIndeed = () => {
     } else if (searchJobCards) {
       // if they search for a job (scrapes the search results page)
       // jobCardScrape(searchJobCards);
-          
+
       autoScrollToBottom(() => {
         console.log("You have hit the bottom of the webpage!");
         jobCardScrape(searchJobCards);
@@ -41,7 +41,7 @@ function indeedMain() {
     const checkExist = setInterval(() => {
       if (document.getElementById("MosaicProviderRichSearchDaemon")) {
         clearInterval(checkExist);
-         resolve();
+        resolve();
       }
     }, 100);
   })
@@ -58,47 +58,40 @@ setTimeout(() => {
 }, 2000);
 
 // sgets job card data
-const jobCardScrape = (getJobCards) => {
-  const jobCards = getJobCards?.querySelectorAll("ul > li");
-  jobCards?.forEach((card) => {
-    // Get job title
-    const jobTitle =
-      card.querySelector("h2.jobTitle span")?.textContent?.trim() || null;
-    // Get company name
-    const companyName =
-      card.querySelector('[data-testid="company-name"]')?.textContent?.trim() ||
-      null;
-    // Get location
-    const location =
-      card
-        .querySelector('[data-testid="text-location"]')
-        ?.textContent?.trim() || null;
-    // Get company description
-    const companyDesc =
-      card.querySelector(".jobMetaDataGroup")?.innerText?.trim() || null;
-    // Get job link and id
-    const jobLinkEl = card.querySelector("h2.jobTitle a");
-    const jobLink = jobLinkEl?.href || null;
-    const jobId = jobLinkEl?.getAttribute("data-jk") || jobLinkEl?.id || null;
+// ...existing code...
+const jobCardScrape = async (getJobCards) => {
+  let hasNext = true;
+  while (hasNext) {
+    // Scrape and collect each page's data
+    const jobs = scrapePage(getJobCards);
+    // Log the jobs for this page (simulate sending to backend)
+    console.log('Page jobs:', jobs);
 
-    if (
-      [jobTitle, companyName, location, companyDesc, jobLink, jobId].some(
-        (val) => val === null || val === undefined
-      )
-    ) {
-      return;
+    // Find the "Next Page" button
+    const nextPageBtn = document.querySelector('a[aria-label="Next Page"]');
+    if (!nextPageBtn) {
+      hasNext = false; // No more pages
+      break;
     }
-    console.log({
-      jobTitle,
-      companyName,
-      location,
-      companyDesc,
-      jobLink,
-      jobId,
-    });
-  });
-};
 
+    nextPageBtn.click();
+
+    // Wait for the page to load new job cards
+    await new Promise((resolve) => {
+      const checkExist = setInterval(() => {
+        // Wait for job cards container to update
+        if (document.getElementById("MosaicProviderRichSearchDaemon")) {
+          clearInterval(checkExist);
+          resolve();
+        }
+      }, 100);
+    });
+
+    // Wait a bit for the page to settle/render
+    await new Promise((r) => setTimeout(r, 2000));
+  }
+};
+// ...existing code...
 const startScriptButton = () => {
   const searchForm = document.getElementById("MosaicProviderRichSearchDaemon");
   const startbtn = document.createElement("button");
@@ -115,6 +108,38 @@ const startScriptButton = () => {
   searchForm.appendChild(startbtn);
 };
 
+const scrapePage = (getJobCards) => {
+  const jobCards = getJobCards?.querySelectorAll("ul > li");
+  const jobs = [];
+  jobCards?.forEach((card) => {
+    // Get job title
+    const jobTitle = card.querySelector("h2.jobTitle span")?.textContent?.trim() || null;
+    // Get company name
+    const companyName = card.querySelector('[data-testid="company-name"]')?.textContent?.trim() || null;
+    // Get location
+    const location = card.querySelector('[data-testid="text-location"]')?.textContent?.trim() || null;
+    // Get company description
+    const companyDesc = card.querySelector(".jobMetaDataGroup")?.innerText?.trim() || null;
+    // Get job link and id
+    const jobLinkEl = card.querySelector("h2.jobTitle a");
+    const jobLink = jobLinkEl?.href || null;
+    const jobId = jobLinkEl?.getAttribute("data-jk") || jobLinkEl?.id || null;
+
+    if ([jobTitle, companyName, location, companyDesc, jobLink, jobId].some((val) => val === null || val === undefined)) {
+      return;
+    }
+    jobs.push({
+      jobTitle,
+      companyName,
+      location,
+      companyDesc,
+      jobLink,
+      jobId,
+    });
+  });
+  return jobs;
+};
+
 function autoScrollToBottom(callback) {
   let lastScrollTop = -1;
   function scrollStep() {
@@ -122,7 +147,10 @@ function autoScrollToBottom(callback) {
     const scrollTop = window.scrollY;
     const windowHeight = window.innerHeight;
     const documentHeight = document.body.offsetHeight;
-    if (scrollTop + windowHeight >= documentHeight - 5 || scrollTop === lastScrollTop) {
+    if (
+      scrollTop + windowHeight >= documentHeight - 5 ||
+      scrollTop === lastScrollTop
+    ) {
       // At bottom or can't scroll further
       if (typeof callback === "function") callback();
       return;
