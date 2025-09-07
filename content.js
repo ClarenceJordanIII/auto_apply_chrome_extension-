@@ -63,6 +63,20 @@ const jobCardScrape = async (getJobCards) => {
   console.log('Starting jobCardScrape...');
   const jobs = scrapePage(getJobCards);
   console.log('Current page jobs:', jobs);
+
+  // Here you can implement any additional logic you need before sending the jobs data
+//  TODO : add open page to check for apply on company website
+  
+
+  // Send the jobs data to the background script
+  if (jobs.length > 0) {
+    chrome.runtime.sendMessage({ action: "storeJobs", jobs }, (response) => {
+      console.log('Response from background script:', response);
+    });
+
+  } else {
+    console.log('No jobs to send to background script.');
+  }
 };
 // ...existing code...
 const startScriptButton = () => {
@@ -102,7 +116,8 @@ const scrapePage = (getJobCards) => {
     const jobLinkEl = card.querySelector("h2.jobTitle a");
     const jobLink = jobLinkEl?.href || null;
     const jobId = jobLinkEl?.getAttribute("data-jk") || jobLinkEl?.id || null;
-    const jobType = card.querySelector('[data-testid="indeedApply"]')?.textContent?.trim() || null;
+    // TOD0 : get rid of job type change null to apply using company website
+    const jobType = card.querySelector('[data-testid="indeedApply"]')?.textContent?.trim() || card.querySelector('[data-testid="attribute_snippet_testid"]')?.textContent?.trim() || null;
     if ([jobTitle, companyName, location, companyDesc, jobLink, jobId,jobType].some((val) => val === null || val === undefined)) {
       console.log(`Skipping incomplete job card at index ${idx}.`);
       return;
