@@ -2008,7 +2008,23 @@ async function fillQuestionByType(container, labelText) {
     }
   }
   
-  // 6. DATE INPUTS
+  // 6. NUMBER INPUTS (years of experience, salary, etc.)
+  const numberInput = container.querySelector('input[type="number"], input[inputmode="numeric"], input[inputmode="text"][min], input[id*="number-input"]');
+  if (numberInput) {
+    console.log(`📝 Found number input for: "${labelText}", current value: "${numberInput.value}"`);
+    if (!numberInput.value) {
+      const value = getNumberInputValue(labelText);
+      if (value) {
+        await fillInputSafely(numberInput, value, labelText);
+        return;
+      }
+    } else {
+      console.log(`⚠️ Number input already has value: "${numberInput.value}"`);
+      return;
+    }
+  }
+
+  // 7. DATE INPUTS
   const dateInput = container.querySelector('input[placeholder*="MM/DD/YYYY"], input[type="date"]');
   if (dateInput && !dateInput.value) {
     const dateValue = getDateValue(labelText);
@@ -2018,7 +2034,7 @@ async function fillQuestionByType(container, labelText) {
     }
   }
   
-  // 7. FILE UPLOADS (skip for now - can't automate file uploads without user interaction)
+  // 8. FILE UPLOADS (skip for now - can't automate file uploads without user interaction)
   const fileInput = container.querySelector('input[type="file"]');
   if (fileInput) {
     console.log(`⚠️ Skipping file upload for: ${labelText} (requires user interaction)`);
@@ -2165,6 +2181,12 @@ function getTextareaValue(labelText) {
   if (text.includes('cover letter')) {
     return 'I am excited to apply for this position and believe my skills and experience make me a great fit for your team. I am eager to contribute to your organization and grow professionally.';
   }
+  
+  // Visa/sponsorship questions in textarea format
+  if (text.includes('visa') || text.includes('sponsorship') || text.includes('h-1b') || text.includes('work authorization')) {
+    return 'No, I do not require sponsorship for employment visa status. I am authorized to work in the United States.';
+  }
+  
   if (text.includes('why do you want') || text.includes('why are you interested')) {
     return 'This role aligns perfectly with my career goals and offers the opportunity to utilize my skills while contributing to a dynamic team.';
   }
@@ -2194,16 +2216,84 @@ function getTextareaValue(labelText) {
 }
 
 /**
+ * Get appropriate value for number inputs (years of experience, etc.)
+ */
+function getNumberInputValue(labelText) {
+  const text = labelText.toLowerCase();
+  
+  // Years of experience questions
+  if (text.includes('years') && text.includes('experience')) {
+    // Technical leadership
+    if (text.includes('technical') && (text.includes('leader') || text.includes('lead'))) {
+      return '3'; // 3 years technical leadership experience
+    }
+    // iOS development
+    if (text.includes('ios') || text.includes('swift')) {
+      return '5'; // 5 years iOS development
+    }
+    // Android development
+    if (text.includes('android') || text.includes('kotlin') || text.includes('java')) {
+      return '4'; // 4 years Android development
+    }
+    // Web development
+    if (text.includes('web') || text.includes('javascript') || text.includes('react') || text.includes('angular')) {
+      return '6'; // 6 years web development
+    }
+    // Python experience
+    if (text.includes('python')) {
+      return '4'; // 4 years Python
+    }
+    // Java experience
+    if (text.includes('java') && !text.includes('javascript')) {
+      return '5'; // 5 years Java
+    }
+    // Management experience
+    if (text.includes('management') || text.includes('manager') || text.includes('managing')) {
+      return '2'; // 2 years management
+    }
+    // Sales experience
+    if (text.includes('sales') || text.includes('selling')) {
+      return '3'; // 3 years sales
+    }
+    // Customer service
+    if (text.includes('customer') || text.includes('service') || text.includes('support')) {
+      return '4'; // 4 years customer service
+    }
+    // Generic experience
+    return '3'; // Default 3 years for any experience question
+  }
+  
+  // Age questions
+  if (text.includes('age') || text.includes('old')) {
+    return '25'; // 25 years old
+  }
+  
+  // Salary expectations (in thousands)
+  if (text.includes('salary') || text.includes('wage') || text.includes('pay')) {
+    return '65'; // $65k expectation
+  }
+  
+  // Hours per week
+  if (text.includes('hours') && text.includes('week')) {
+    return '40'; // 40 hours per week
+  }
+  
+  // Default number
+  return '1';
+}
+
+/**
  * Get appropriate radio button selection based on label text
  */
 function getRadioValue(labelText, radioButtons) {
   const text = labelText.toLowerCase();
   
-  // Work authorization / visa questions
-  if (text.includes('visa') || text.includes('sponsorship') || text.includes('h-1b') || text.includes('opt') || text.includes('work authorization')) {
+  // Work authorization / visa questions - specifically about sponsorship needs
+  if (text.includes('visa') || text.includes('sponsorship') || text.includes('h-1b') || text.includes('opt') || 
+      (text.includes('work authorization') && text.includes('sponsor'))) {
     // For visa/sponsorship questions, usually answer "No" (don't need sponsorship)
     const noOption = Array.from(radioButtons).find(radio => 
-      radio.value.toLowerCase() === 'no' || 
+      radio.value === '2' || radio.value.toLowerCase() === 'no' || 
       radio.nextElementSibling?.textContent?.toLowerCase().includes('no')
     );
     return noOption || radioButtons[1]; // Default to second option if "No" not found
@@ -2211,20 +2301,22 @@ function getRadioValue(labelText, radioButtons) {
   
   // Location/commute questions
   if (text.includes('able to') || text.includes('report for') || text.includes('work in') || text.includes('commute') || 
-      text.includes('relocate') || text.includes('travel') || text.includes('on-site') || text.includes('in-person')) {
+      text.includes('relocate') || text.includes('travel') || text.includes('on-site') || text.includes('in-person') ||
+      text.includes('reliably commute') || text.includes('commute to')) {
     // For work location questions, usually answer "Yes"
     const yesOption = Array.from(radioButtons).find(radio => 
-      radio.value.toLowerCase() === 'yes' || 
+      radio.value === '1' || radio.value.toLowerCase() === 'yes' || 
       radio.nextElementSibling?.textContent?.toLowerCase().includes('yes')
     );
     return yesOption || radioButtons[0]; // Default to first option if "Yes" not found
   }
   
-  // Age/eligibility questions
-  if (text.includes('18') || text.includes('age') || text.includes('eligible') || text.includes('legally authorized')) {
-    // For age questions, usually answer "Yes"
+  // Age/eligibility questions - including employment eligibility
+  if (text.includes('18') || text.includes('age') || text.includes('eligible') || text.includes('legally authorized') ||
+      text.includes('employment eligibility') || text.includes('authorized to work')) {
+    // For age/eligibility questions, usually answer "Yes"
     const yesOption = Array.from(radioButtons).find(radio => 
-      radio.value.toLowerCase() === 'yes' || 
+      radio.value === '1' || radio.value.toLowerCase() === 'yes' || 
       radio.nextElementSibling?.textContent?.toLowerCase().includes('yes')
     );
     return yesOption || radioButtons[0];
