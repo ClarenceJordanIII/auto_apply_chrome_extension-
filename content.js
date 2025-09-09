@@ -53,22 +53,25 @@ window.addEventListener('pageshow', function(event) {
 });
 
 // Keep connection alive to prevent caching
-let keepAliveInterval = setInterval(() => {
-  if (isExtensionContextValid()) {
-    // Send periodic heartbeat to background
-    try {
-      chrome.runtime.sendMessage({ action: "heartbeat" }, () => {
-        if (chrome.runtime.lastError) {
-          console.log("Background connection lost:", chrome.runtime.lastError.message);
-        }
-      });
-    } catch (e) {
-      console.log("Heartbeat failed:", e.message);
+if (!window.keepAliveInterval) {
+  window.keepAliveInterval = setInterval(() => {
+    if (isExtensionContextValid()) {
+      // Send periodic heartbeat to background
+      try {
+        chrome.runtime.sendMessage({ action: "heartbeat" }, () => {
+          if (chrome.runtime.lastError) {
+            console.log("Background connection lost:", chrome.runtime.lastError.message);
+          }
+        });
+      } catch (e) {
+        console.log("Heartbeat failed:", e.message);
+      }
+    } else {
+      clearInterval(window.keepAliveInterval);
+      window.keepAliveInterval = null;
     }
-  } else {
-    clearInterval(keepAliveInterval);
-  }
-}, 5000); // Every 5 seconds
+  }, 5000); // Every 5 seconds
+}
 
 // Global error handler for extension context issues
 window.addEventListener("error", function (event) {
@@ -869,10 +872,20 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
         }
 
         if (!applyBtn) {
-          console.log("❌ STEP 1 FAILED: No apply button found");
-          result = "fail_no_apply_button";
-          return;
-        }
+          // Check if we're already on the application form (sometimes the page redirects directly)
+          const isAlreadyOnForm = document.querySelector('#mosaic-contactInfoModule') ||
+                                 document.querySelector('[data-testid="profile-location-page"]') ||
+                                 window.location.href.includes('smartapply.indeed.com');
+          
+          if (isAlreadyOnForm) {
+            console.log("✅ STEP 1 SUCCESS: Already on application form (direct redirect)");
+            // Skip to step 2
+          } else {
+            console.log("❌ STEP 1 FAILED: No apply button found");
+            result = "fail_no_apply_button";
+            return;
+          }
+        } else {
 
         // Click the apply button
         console.log("�️ Clicking apply button...");
@@ -919,18 +932,24 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
         
         // ✅ STEP 1 VALIDATION: Wait for application form to appear
         await new Promise(r => setTimeout(r, 3000));
-        const formAppeared = document.querySelector('#mosaic-contactInfoModule') || 
-                           document.querySelector('form') ||
-                           document.querySelector('[data-testid*="form"]') ||
-                           window.location.href !== job.jobLink;
         
-        if (!formAppeared) {
+        // Check if we're on an Indeed application form page
+        const isApplicationPage = window.location.href.includes('smartapply.indeed.com') ||
+                                 window.location.href.includes('form/profile') ||
+                                 document.querySelector('#mosaic-contactInfoModule') ||
+                                 document.querySelector('[data-testid="profile-location-page"]') ||
+                                 document.querySelector('form') ||
+                                 window.location.href !== job.jobLink;
+        
+        if (!isApplicationPage) {
           console.log("❌ STEP 1 FAILED: Apply button clicked but no form appeared");
           result = "fail_form_not_loaded";
           return;
         }
         
-        console.log("✅ STEP 1 SUCCESS: Apply button clicked, form loaded");
+          console.log("✅ STEP 1 SUCCESS: Apply button clicked, form loaded");
+          console.log("📍 Current URL:", window.location.href);
+        }
 
         // ═══════════════════════════════════════════════════════════════════════════
         // 🚀 STEP 2: FILL LOCATION & EXPERIENCE - Fill out basic job info
@@ -992,26 +1011,61 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
           await new Promise(r => setTimeout(r, 1000));
           attempts++;
           
-          // Look for continue buttons
-          const continueSelectors = [
-            'button:contains("Continue")',
-            'button:contains("Next")', 
-            'button:contains("Submit")',
-            'input[type="submit"]',
-            'button[type="submit"]'
-          ];
+          // Check if we're on the contact info page or resume selection page
+          const isResumeSelectionPage = document.querySelector('h1') && 
+            document.querySelector('h1').textContent.includes('Choose how to apply');
           
-          // Try text-based search for continue buttons
+          if (isResumeSelectionPage) {
+            console.log("📋 On resume selection page - looking for resume Continue button");
+            
+            // Try the resume selection page Continue button first
+            continueBtn = document.querySelector('button[data-testid="continue-button"]');
+            if (continueBtn) {
+              console.log("✅ Found resume selection Continue button");
+              break;
+            }
+            
+            // Fallback for resume selection page
+            continueBtn = document.querySelector('button.mosaic-provider-module-apply-resume-selection-6xgesl');
+            if (continueBtn) {
+              console.log("✅ Found resume selection Continue button with CSS class");
+              break;
+            }
+          } else {
+            console.log("📝 On contact info page - looking for contact info Continue button");
+            
+            // Try more stable selectors for contact info page
+            const contactInfoSelectors = [
+              'button[data-testid*="continue"]',
+              'button.mosaic-provider-module-apply-contact-info-krg1j8',
+              'form button[type="submit"]',
+              'form button:not([type="button"])',
+              '.mosaic-provider-module button:contains("Continue")'
+            ];
+            
+            for (const selector of contactInfoSelectors) {
+              continueBtn = document.querySelector(selector);
+              if (continueBtn) {
+                console.log(`✅ Found contact info Continue button with selector: ${selector}`);
+                break;
+              }
+            }
+          }
+          
+          // Generic fallback - try text-based search for continue buttons
           const allButtons = document.querySelectorAll('button, input[type="submit"], input[type="button"]');
           for (const btn of allButtons) {
             const text = (btn.textContent || btn.value || '').toLowerCase();
             if (text.includes('continue') || text.includes('next') || text.includes('proceed')) {
               continueBtn = btn;
+              console.log("✅ Found Continue button via text search:", text);
               break;
             }
           }
           
           if (continueBtn) break;
+          
+          console.log(`🔄 Attempt ${attempts}/10 - Continue button not found yet...`);
         }
         
         if (!continueBtn) {
@@ -1028,6 +1082,73 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
         console.log("✅ STEP 3 SUCCESS: Continue button clicked");
 
         // ═══════════════════════════════════════════════════════════════════════════
+        // 🚀 STEP 3.5: HANDLE EMPLOYER QUESTIONS - Fill out any employer questionnaire
+        // ═══════════════════════════════════════════════════════════════════════════
+        
+        // Wait and check if we're now on a questions page
+        await new Promise(r => setTimeout(r, 2000));
+        
+        // Check if we're on the employer questions page
+        const isQuestionsPage = document.querySelector('h1[data-testid="questions-heading"]') ||
+                               document.querySelector('.ia-Questions') ||
+                               document.querySelector('[id^="mosaic-provider-module-apply-questions"]');
+        
+        if (isQuestionsPage) {
+          console.log("📝 STEP 3.5: Detected employer questions page - filling out questions");
+          await fillEmployerQuestions();
+          
+          // Look for Continue button on questions page with multiple strategies
+          let questionsContinueBtn = null;
+          attempts = 0;
+          
+          while (!questionsContinueBtn && attempts < 8) {
+            await new Promise(r => setTimeout(r, 1000));
+            attempts++;
+            
+            // Try various continue button selectors for questions page
+            const questionsContinueSelectors = [
+              'button[data-testid*="Continue"]',
+              'button[class*="continue"]',
+              'form button[type="submit"]',
+              'button.mosaic-provider-module-apply-questions-6xgesl' // From your HTML
+            ];
+            
+            for (const selector of questionsContinueSelectors) {
+              questionsContinueBtn = document.querySelector(selector);
+              if (questionsContinueBtn) {
+                console.log(`✅ Found questions Continue button with selector: ${selector}`);
+                break;
+              }
+            }
+            
+            // Fallback: text-based search
+            if (!questionsContinueBtn) {
+              const allButtons = document.querySelectorAll('button');
+              for (const btn of allButtons) {
+                const text = (btn.textContent || '').toLowerCase().trim();
+                if (text === 'continue' || text === 'next' || text === 'proceed') {
+                  questionsContinueBtn = btn;
+                  console.log(`✅ Found Continue button via text search: "${text}"`);
+                  break;
+                }
+              }
+            }
+            
+            if (questionsContinueBtn) break;
+            console.log(`🔄 Attempt ${attempts}/8 - Questions Continue button not found yet...`);
+          }
+          
+          if (questionsContinueBtn) {
+            console.log("🖱️ Clicking Continue button on questions page...");
+            questionsContinueBtn.click();
+            await new Promise(r => setTimeout(r, 3000));
+            console.log("✅ STEP 3.5 SUCCESS: Questions filled and continued");
+          } else {
+            console.log("⚠️ No Continue button found on questions page, proceeding anyway...");
+          }
+        }
+
+        // ═══════════════════════════════════════════════════════════════════════════
         // 🚀 STEP 4: SUBMIT APPLICATION & CHECK SUCCESS - Final submission and validation
         // ═══════════════════════════════════════════════════════════════════════════
         console.log("� STEP 4: Final application submission and success check");
@@ -1036,15 +1157,54 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
         let submitBtn = null;
         attempts = 0;
         
+        // Check if we're on the review page first
+        const isReviewPage = document.querySelector('.ia-Review') || document.body.textContent.includes('Please review your application');
+        if (isReviewPage) {
+          console.log("📋 Detected application review page");
+        }
+        
         while (!submitBtn && attempts < 10) {
           await new Promise(r => setTimeout(r, 1000));
           attempts++;
           
+          // Try dynamic selectors for the submit button
+          const submitSelectors = [
+            // Look for buttons in common submit areas
+            '.ia-BasePage-footer button',
+            '.ia-Review button',
+            '[class*="footer"] button',
+            '[class*="submit"] button',
+            // Look for buttons with submit-like styling
+            'button[class*="primary"]',
+            'button[class*="cta"]',
+            'button[class*="action"]',
+            // Generic button containers
+            'main button',
+            'footer button'
+          ];
+          
+          for (const selector of submitSelectors) {
+            try {
+              submitBtn = document.querySelector(selector);
+              if (submitBtn) {
+                console.log(`✅ Found submit button with selector: ${selector}`);
+                break;
+              }
+            } catch (e) {
+              // Ignore selector errors
+            }
+          }
+          
+          if (submitBtn) break;
+          
+          // Fallback: search all buttons by text content
           const allButtons = document.querySelectorAll('button, input[type="submit"], input[type="button"]');
           for (const btn of allButtons) {
-            const text = (btn.textContent || btn.value || '').toLowerCase();
-            if (text.includes('submit') || text.includes('apply') || text.includes('send application')) {
+            const text = (btn.textContent || btn.value || '').toLowerCase().trim();
+            if (text.includes('submit your application') || text.includes('submit application') || 
+                text.includes('submit') || text.includes('apply now') || text.includes('send application')) {
               submitBtn = btn;
+              console.log(`✅ Found submit button by text: "${text}"`);
               break;
             }
           }
@@ -1643,3 +1803,622 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
     return true; // Indicates async response
   }
 });
+
+// ═══════════════════════════════════════════════════════════════════════════
+// 🎯 EMPLOYER QUESTIONS HANDLER - Dynamic form filling for any question types
+// ═══════════════════════════════════════════════════════════════════════════
+
+/**
+ * Fill employer questions dynamically based on question type and label
+ */
+async function fillEmployerQuestions() {
+  console.log("📝 Starting to fill employer questions...");
+  
+  // Wait for questions to be fully loaded
+  await new Promise(r => setTimeout(r, 1000));
+  
+  let filledCount = 0;
+  
+  try {
+    // Find all question containers
+    const questionContainers = document.querySelectorAll('.ia-Questions-item, [id^="q_"]');
+    console.log(`📋 Found ${questionContainers.length} question containers`);
+    
+    for (let i = 0; i < questionContainers.length; i++) {
+      const container = questionContainers[i];
+      console.log(`\n🔍 Processing question ${i + 1}/${questionContainers.length}`);
+      
+      try {
+        // Get question label/text
+        const labelElement = container.querySelector('label, legend, [data-testid*="label"]');
+        const labelText = labelElement ? 
+          (labelElement.textContent || labelElement.innerText || '').toLowerCase().trim() : '';
+        
+        console.log(`📝 Question label: "${labelText}"`);
+        
+        // Check for different input types and fill accordingly
+        await fillQuestionByType(container, labelText);
+        filledCount++;
+        
+        // Small delay between questions
+        await new Promise(r => setTimeout(r, 200));
+        
+      } catch (questionError) {
+        console.error(`❌ Error processing question ${i + 1}:`, questionError.message);
+      }
+    }
+    
+    console.log(`✅ Successfully filled ${filledCount} questions`);
+    
+    // After filling all questions, look for and click the continue button
+    console.log("🔍 Looking for Continue button after filling questions...");
+    
+    // Wait a moment for any dynamic updates
+    await new Promise(r => setTimeout(r, 1000));
+    
+    const continueSelectors = [
+      // Generic selectors that should work across different pages
+      'button[data-testid*="continue"]',
+      'button.mosaic-provider-module-apply-questions-6xgesl', // Questions page continue button
+      'button[type="submit"]',
+      // Look for buttons in the questions container
+      '.ia-Questions button[type="button"]',
+      '.mosaic-provider-module-apply-questions button[type="button"]',
+      '[class*="apply-questions"] button',
+      'button[class*="6xgesl"]' // Dynamic class pattern for continue buttons
+    ];
+    
+    let continueButton = null;
+    
+    // First try CSS selectors
+    for (const selector of continueSelectors) {
+      try {
+        continueButton = document.querySelector(selector);
+        if (continueButton) {
+          console.log(`✅ Found Continue button with selector: ${selector}`);
+          break;
+        }
+      } catch (e) {
+        // Ignore selector errors
+      }
+    }
+    
+    // If no button found, search by text content
+    if (!continueButton) {
+      const allButtons = document.querySelectorAll('button, input[type="submit"], input[type="button"]');
+      for (const btn of allButtons) {
+        const text = (btn.textContent || btn.value || '').toLowerCase().trim();
+        if (text.includes('continue') || text.includes('next') || text.includes('proceed')) {
+          continueButton = btn;
+          console.log(`✅ Found Continue button by text: "${text}"`);
+          break;
+        }
+      }
+    }
+    
+    if (continueButton) {
+      // Scroll to the button to ensure it's visible
+      continueButton.scrollIntoView({ behavior: 'smooth', block: 'center' });
+      await new Promise(r => setTimeout(r, 500));
+      
+      console.log("🔄 Clicking Continue button after questions...");
+      continueButton.click();
+      console.log("✅ Clicked Continue button");
+      
+      // Wait to see if the page changes
+      await new Promise(r => setTimeout(r, 2500));
+    } else {
+      console.log("❌ Could not find Continue button after filling questions");
+    }
+    
+  } catch (error) {
+    console.error("❌ Error in fillEmployerQuestions:", error.message);
+  }
+}
+
+/**
+ * Fill individual question based on its type and content
+ */
+async function fillQuestionByType(container, labelText) {
+  console.log(`🔍 Analyzing question container for: "${labelText}"`);
+  
+  // 1. TEXT INPUTS (address, city, state, zip, etc.)
+  const textInput = container.querySelector('input[type="text"], input:not([type]), input[data-testid*="input"]');
+  if (textInput) {
+    console.log(`📝 Found text input for: "${labelText}", current value: "${textInput.value}"`);
+    if (!textInput.value) {
+      const value = getTextInputValue(labelText);
+      if (value) {
+        await fillInputSafely(textInput, value, labelText);
+        return;
+      }
+    } else {
+      console.log(`⚠️ Text input already has value: "${textInput.value}"`);
+      return;
+    }
+  }
+  
+  // 2. TEXTAREA (desired pay, cover letter text, etc.)
+  const textarea = container.querySelector('textarea');
+  if (textarea) {
+    console.log(`📝 Found textarea for: "${labelText}", current value: "${textarea.value}"`);
+    if (!textarea.value) {
+      const value = getTextareaValue(labelText);
+      if (value) {
+        await fillInputSafely(textarea, value, labelText);
+        return;
+      }
+    } else {
+      console.log(`⚠️ Textarea already has value: "${textarea.value}"`);
+      return;
+    }
+  }
+  
+  // 3. SELECT DROPDOWNS (country, state, etc.)
+  const select = container.querySelector('select');
+  if (select) {
+    console.log(`📝 Found select dropdown for: "${labelText}", current value: "${select.value}"`);
+    if (!select.value || select.value === '') {
+      const value = getSelectValue(labelText, select);
+      if (value) {
+        select.value = value;
+        select.dispatchEvent(new Event('change', { bubbles: true }));
+        console.log(`✅ Selected "${value}" for ${labelText}`);
+        return;
+      }
+    } else {
+      console.log(`⚠️ Select already has value: "${select.value}"`);
+      return;
+    }
+  }
+  
+  // 4. RADIO BUTTONS
+  const radioButtons = container.querySelectorAll('input[type="radio"]');
+  if (radioButtons.length > 0) {
+    console.log(`📝 Found ${radioButtons.length} radio buttons for: "${labelText}"`);
+    // Check if any radio is already selected
+    const alreadySelected = Array.from(radioButtons).find(radio => radio.checked);
+    if (!alreadySelected) {
+      const selectedValue = getRadioValue(labelText, radioButtons);
+      if (selectedValue) {
+        selectedValue.checked = true;
+        selectedValue.dispatchEvent(new Event('change', { bubbles: true }));
+        console.log(`✅ Selected radio option for ${labelText}`);
+        return;
+      }
+    } else {
+      console.log(`⚠️ Radio button already selected for: "${labelText}"`);
+      return;
+    }
+  }
+  
+  // 5. CHECKBOXES
+  const checkboxes = container.querySelectorAll('input[type="checkbox"]');
+  if (checkboxes.length > 0) {
+    const shouldCheck = getCheckboxValue(labelText);
+    checkboxes.forEach(checkbox => {
+      if (shouldCheck) {
+        checkbox.checked = true;
+        checkbox.dispatchEvent(new Event('change', { bubbles: true }));
+      }
+    });
+    if (shouldCheck) {
+      console.log(`✅ Checked boxes for ${labelText}`);
+      return;
+    }
+  }
+  
+  // 6. DATE INPUTS
+  const dateInput = container.querySelector('input[placeholder*="MM/DD/YYYY"], input[type="date"]');
+  if (dateInput && !dateInput.value) {
+    const dateValue = getDateValue(labelText);
+    if (dateValue) {
+      await fillInputSafely(dateInput, dateValue, labelText);
+      return;
+    }
+  }
+  
+  // 7. FILE UPLOADS (skip for now - can't automate file uploads without user interaction)
+  const fileInput = container.querySelector('input[type="file"]');
+  if (fileInput) {
+    console.log(`⚠️ Skipping file upload for: ${labelText} (requires user interaction)`);
+    return;
+  }
+  
+  // Log what elements we found for debugging
+  const allInputs = container.querySelectorAll('input, textarea, select');
+  console.log(`⚠️ Unknown question type for: "${labelText}"`);
+  console.log(`🔍 Found ${allInputs.length} input elements:`, Array.from(allInputs).map(el => `${el.tagName}[type="${el.type}"]`));
+}
+
+/**
+ * Safely fill input with proper event handling
+ */
+async function fillInputSafely(input, value, labelText) {
+  try {
+    // Wait for element to be ready
+    if (!input.offsetParent && input.style.display === 'none') {
+      console.log(`⚠️ Input not visible for: ${labelText}`);
+      return false;
+    }
+    
+    // Focus, fill, and trigger events
+    input.focus();
+    input.value = value;
+    
+    // Trigger all relevant events
+    input.dispatchEvent(new Event('input', { bubbles: true }));
+    input.dispatchEvent(new Event('change', { bubbles: true }));
+    input.dispatchEvent(new Event('blur', { bubbles: true }));
+    
+    console.log(`✅ Filled "${value}" for ${labelText}`);
+    return true;
+  } catch (error) {
+    console.error(`❌ Error filling input for ${labelText}:`, error.message);
+    return false;
+  }
+}
+
+/**
+ * Get appropriate value for text inputs based on label
+ */
+function getTextInputValue(labelText) {
+  const text = labelText.toLowerCase();
+  
+  // Address fields
+  if (text.includes('address') || text.includes('street')) {
+    return '123 Main Street';
+  }
+  if (text.includes('city')) {
+    return 'Dallas';
+  }
+  if (text.includes('state') || text.includes('province')) {
+    return 'TX';
+  }
+  if (text.includes('zip') || text.includes('postal')) {
+    return '75201';
+  }
+  
+  // Contact info
+  if (text.includes('phone') || text.includes('mobile') || text.includes('cell')) {
+    return '(555) 123-4567';
+  }
+  if (text.includes('email')) {
+    return 'john.doe.jobs@gmail.com';
+  }
+  if (text.includes('emergency contact')) {
+    return 'Jane Doe - (555) 987-6543';
+  }
+  
+  // Professional info
+  if (text.includes('linkedin')) {
+    return 'https://www.linkedin.com/in/johndoe';
+  }
+  if (text.includes('website') || text.includes('portfolio') || text.includes('blog')) {
+    return 'https://johndoe-portfolio.com';
+  }
+  if (text.includes('github')) {
+    return 'https://github.com/johndoe';
+  }
+  if (text.includes('referred') || text.includes('referral') || text.includes('how did you hear')) {
+    return 'Online job search';
+  }
+  
+  // Salary/compensation
+  if (text.includes('salary') || text.includes('wage') || text.includes('pay') || text.includes('compensation')) {
+    return 'Competitive/Negotiable';
+  }
+  
+  // Previous employer info
+  if (text.includes('previous employer') || text.includes('last company') || text.includes('current employer')) {
+    return 'ABC Company';
+  }
+  if (text.includes('supervisor') || text.includes('manager') || text.includes('boss')) {
+    return 'John Smith';
+  }
+  
+  // Education
+  if (text.includes('school') || text.includes('university') || text.includes('college')) {
+    return 'State University';
+  }
+  if (text.includes('major') || text.includes('degree field')) {
+    return 'Business Administration';  
+  }
+  if (text.includes('gpa')) {
+    return '3.5';
+  }
+  
+  // Certifications and licenses
+  if (text.includes('certification') || text.includes('license number')) {
+    return 'Valid - Details available upon request';
+  }
+  
+  // Skills and tools
+  if (text.includes('software') || text.includes('tools') || text.includes('programs')) {
+    return 'Microsoft Office, Google Workspace';
+  }
+  if (text.includes('programming') || text.includes('coding')) {
+    return 'JavaScript, Python, HTML/CSS';
+  }
+  
+  // Work preferences
+  if (text.includes('notice period') || text.includes('availability date')) {
+    return '2 weeks';
+  }
+  if (text.includes('start date')) {
+    return 'Immediately';
+  }
+  
+  // Generic text field
+  return 'Available upon request';
+}
+
+/**
+ * Get appropriate value for textarea based on label
+ */
+function getTextareaValue(labelText) {
+  const text = labelText.toLowerCase();
+  
+  if (text.includes('desired pay') || text.includes('salary') || text.includes('wage') || text.includes('compensation')) {
+    return 'Competitive salary based on experience and market standards';
+  }
+  if (text.includes('cover letter')) {
+    return 'I am excited to apply for this position and believe my skills and experience make me a great fit for your team. I am eager to contribute to your organization and grow professionally.';
+  }
+  if (text.includes('why do you want') || text.includes('why are you interested')) {
+    return 'This role aligns perfectly with my career goals and offers the opportunity to utilize my skills while contributing to a dynamic team.';
+  }
+  if (text.includes('experience') || text.includes('background') || text.includes('relevant')) {
+    return 'I have relevant experience in this field with a proven track record of success. I am committed to delivering quality results and continuous learning.';
+  }
+  if (text.includes('strength') || text.includes('skills')) {
+    return 'My key strengths include strong communication skills, problem-solving abilities, attention to detail, and the ability to work effectively both independently and as part of a team.';
+  }
+  if (text.includes('goal') || text.includes('objective') || text.includes('career')) {
+    return 'My goal is to contribute to a successful team while developing my professional skills and advancing my career in this field.';
+  }
+  if (text.includes('challenge') || text.includes('difficult situation')) {
+    return 'I approach challenges with a positive attitude and systematic problem-solving approach. I believe in learning from every experience and adapting to find effective solutions.';
+  }
+  if (text.includes('additional') || text.includes('anything else') || text.includes('comments')) {
+    return 'I am enthusiastic about this opportunity and would welcome the chance to discuss how my background and skills can contribute to your team. Thank you for your consideration.';
+  }
+  if (text.includes('availability') || text.includes('schedule')) {
+    return 'I am flexible with scheduling and available to work various shifts as needed. I can start immediately or with appropriate notice period.';
+  }
+  if (text.includes('education') || text.includes('qualifications')) {
+    return 'I have the necessary educational background and qualifications for this role, with a commitment to ongoing professional development.';
+  }
+  
+  return 'I am highly motivated and believe I would be a valuable addition to your team. I look forward to the opportunity to contribute to your organization.';
+}
+
+/**
+ * Get appropriate radio button selection based on label text
+ */
+function getRadioValue(labelText, radioButtons) {
+  const text = labelText.toLowerCase();
+  
+  // Work authorization / visa questions
+  if (text.includes('visa') || text.includes('sponsorship') || text.includes('h-1b') || text.includes('opt') || text.includes('work authorization')) {
+    // For visa/sponsorship questions, usually answer "No" (don't need sponsorship)
+    const noOption = Array.from(radioButtons).find(radio => 
+      radio.value.toLowerCase() === 'no' || 
+      radio.nextElementSibling?.textContent?.toLowerCase().includes('no')
+    );
+    return noOption || radioButtons[1]; // Default to second option if "No" not found
+  }
+  
+  // Location/commute questions
+  if (text.includes('able to') || text.includes('report for') || text.includes('work in') || text.includes('commute') || 
+      text.includes('relocate') || text.includes('travel') || text.includes('on-site') || text.includes('in-person')) {
+    // For work location questions, usually answer "Yes"
+    const yesOption = Array.from(radioButtons).find(radio => 
+      radio.value.toLowerCase() === 'yes' || 
+      radio.nextElementSibling?.textContent?.toLowerCase().includes('yes')
+    );
+    return yesOption || radioButtons[0]; // Default to first option if "Yes" not found
+  }
+  
+  // Age/eligibility questions
+  if (text.includes('18') || text.includes('age') || text.includes('eligible') || text.includes('legally authorized')) {
+    // For age questions, usually answer "Yes"
+    const yesOption = Array.from(radioButtons).find(radio => 
+      radio.value.toLowerCase() === 'yes' || 
+      radio.nextElementSibling?.textContent?.toLowerCase().includes('yes')
+    );
+    return yesOption || radioButtons[0];
+  }
+  
+  // Background check / drug test questions
+  if (text.includes('background') || text.includes('drug') || text.includes('test') || text.includes('screening') || text.includes('criminal')) {
+    // For background/drug test questions, usually answer "Yes" (willing to comply)
+    const yesOption = Array.from(radioButtons).find(radio => 
+      radio.value.toLowerCase() === 'yes' || 
+      radio.nextElementSibling?.textContent?.toLowerCase().includes('yes')
+    );
+    return yesOption || radioButtons[0];
+  }
+  
+  // Schedule/availability questions
+  if (text.includes('available') || text.includes('start') || text.includes('schedule') || text.includes('shift') || 
+      text.includes('weekend') || text.includes('overtime') || text.includes('flexible')) {
+    // For availability questions, usually answer "Yes"
+    const yesOption = Array.from(radioButtons).find(radio => 
+      radio.value.toLowerCase() === 'yes' || 
+      radio.nextElementSibling?.textContent?.toLowerCase().includes('yes')
+    );
+    return yesOption || radioButtons[0];
+  }
+  
+  // Experience/qualification questions
+  if (text.includes('experience') || text.includes('years') || text.includes('qualification') || text.includes('skill')) {
+    // For experience questions, usually answer "Yes" 
+    const yesOption = Array.from(radioButtons).find(radio => 
+      radio.value.toLowerCase() === 'yes' || 
+      radio.nextElementSibling?.textContent?.toLowerCase().includes('yes')
+    );
+    return yesOption || radioButtons[0];
+  }
+  
+  // Driver's license questions
+  if (text.includes('license') || text.includes('driver') || text.includes('driving') || text.includes('vehicle')) {
+    // For license questions, usually answer "Yes"
+    const yesOption = Array.from(radioButtons).find(radio => 
+      radio.value.toLowerCase() === 'yes' || 
+      radio.nextElementSibling?.textContent?.toLowerCase().includes('yes')
+    );
+    return yesOption || radioButtons[0];
+  }
+  
+  // Education questions
+  if (text.includes('degree') || text.includes('diploma') || text.includes('education') || text.includes('graduate')) {
+    // For education questions, usually answer "Yes"
+    const yesOption = Array.from(radioButtons).find(radio => 
+      radio.value.toLowerCase() === 'yes' || 
+      radio.nextElementSibling?.textContent?.toLowerCase().includes('yes')
+    );
+    return yesOption || radioButtons[0];
+  }
+  
+  // Default to first option (usually "Yes")
+  return radioButtons[0];
+}
+
+/**
+ * Get appropriate value for select dropdowns
+ */
+function getSelectValue(labelText, selectElement) {
+  const text = labelText.toLowerCase();
+  const options = Array.from(selectElement.options);
+  
+  if (text.includes('country')) {
+    // Find "United States" option
+    const usOption = options.find(opt => 
+      opt.textContent.toLowerCase().includes('united states') || 
+      opt.value === '1'
+    );
+    return usOption ? usOption.value : options[1]?.value;
+  }
+  
+  if (text.includes('state') || text.includes('province')) {
+    // Find Texas or first reasonable state
+    const txOption = options.find(opt => 
+      opt.textContent.toLowerCase().includes('texas') ||
+      opt.textContent.toLowerCase().includes('tx')
+    );
+    return txOption ? txOption.value : options[1]?.value;
+  }
+  
+  // Default to first non-empty option
+  return options.find(opt => opt.value && opt.value !== '')?.value || options[1]?.value;
+}
+
+/**
+ * Get appropriate radio button selection
+ */
+function getRadioValue(labelText, radioButtons) {
+  const text = labelText.toLowerCase();
+  const radios = Array.from(radioButtons);
+  
+  // For yes/no questions, prefer "yes"
+  if (text.includes('eligible') || text.includes('authorized') || text.includes('available')) {
+    const yesRadio = radios.find(radio => {
+      const label = radio.parentElement?.textContent?.toLowerCase() || '';
+      return label.includes('yes') || label.includes('authorized') || label.includes('eligible');
+    });
+    if (yesRadio) return yesRadio;
+  }
+  
+  // For experience questions, select middle option or "some experience"
+  if (text.includes('experience') || text.includes('years')) {
+    const expRadio = radios.find(radio => {
+      const label = radio.parentElement?.textContent?.toLowerCase() || '';
+      return label.includes('2-5') || label.includes('some') || label.includes('moderate');
+    });
+    if (expRadio) return expRadio;
+  }
+  
+  // Default to first option
+  return radios[0];
+}
+
+/**
+ * Determine if checkboxes should be checked
+ */
+function getCheckboxValue(labelText) {
+  const text = labelText.toLowerCase();
+  
+  // Generally check boxes for agreements, terms, etc.
+  if (text.includes('agree') || text.includes('terms') || text.includes('conditions') || 
+      text.includes('policy') || text.includes('consent') || text.includes('authorize') ||
+      text.includes('acknowledge') || text.includes('accept') || text.includes('confirm')) {
+    return true;
+  }
+  
+  // Marketing and communication preferences
+  if (text.includes('marketing') || text.includes('newsletter') || text.includes('promotional') ||
+      text.includes('updates') || text.includes('communications')) {
+    return false; // Usually don't want marketing emails
+  }
+  
+  // Opt-out statements - don't check these
+  if (text.includes('opt out') || text.includes('do not') || text.includes("don't want") || 
+      text.includes('unsubscribe') || text.includes('decline')) {
+    return false;
+  }
+  
+  // Work preferences - usually check these
+  if (text.includes('available') || text.includes('willing') || text.includes('able to') ||
+      text.includes('interested in') || text.includes('open to')) {
+    return true;
+  }
+  
+  // Background check and screening - check these
+  if (text.includes('background check') || text.includes('drug test') || text.includes('screening') ||
+      text.includes('verification') || text.includes('reference check')) {
+    return true;
+  }
+  
+  // Legal authorization - check these
+  if (text.includes('authorized to work') || text.includes('legal right') || text.includes('eligible') ||
+      text.includes('18 years') || text.includes('age requirement')) {
+    return true;
+  }
+  
+  // Don't check boxes for negative statements
+  if (text.includes("don't") || text.includes('not interested') || text.includes('no thanks')) {
+    return false;
+  }
+  
+  // Default to checking boxes (most are agreements or confirmations)
+  return true;
+}
+
+/**
+ * Get appropriate date value
+ */
+function getDateValue(labelText) {
+  const text = labelText.toLowerCase();
+  
+  if (text.includes('available') || text.includes('start')) {
+    // Available to start immediately or within 2 weeks
+    const startDate = new Date();
+    startDate.setDate(startDate.getDate() + 14); // 2 weeks from now
+    return startDate.toLocaleDateString('en-US', { 
+      month: '2-digit', 
+      day: '2-digit', 
+      year: 'numeric' 
+    });
+  }
+  
+  if (text.includes('birth') || text.includes('dob')) {
+    return '01/01/1990'; // Generic DOB
+  }
+  
+  return new Date().toLocaleDateString('en-US', { 
+    month: '2-digit', 
+    day: '2-digit', 
+    year: 'numeric' 
+  });
+}
