@@ -5,7 +5,7 @@ let failedJobs = [];
 let currentJob = null;
 let processing = false;
 
-const JOB_TIMEOUT = 50000; // 50 seconds per job (less than content script timeout)
+const JOB_TIMEOUT = 500000; // 90 seconds per job (more time for complex applications)
 const JOB_THROTTLE = 3000; // 3 seconds between jobs (prevent rate limiting)
 
 // Load job queue from storage on startup
@@ -108,7 +108,7 @@ function processNextJob() {
     // Increased timeout for complex applications
     let timeoutId = setTimeout(() => {
       if (!jobCompleted) {
-        console.log("Job timed out after 60 seconds:", currentJob);
+        console.log("Job timed out after 90 seconds:", currentJob);
         jobCompleted = true;
         currentJob.status = "fail_timeout";
         failedJobs.push(currentJob);

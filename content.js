@@ -813,7 +813,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
         console.log("⏰ Job application timeout - sending failure response");
         safeResponse({ status: "timeout", result: "fail_timeout" });
       }
-    }, 45000); // 45 seconds timeout (less than background script timeout)
+    }, 75000); // 75 seconds timeout (less than background script timeout)
     
     // Wrap in promise to ensure proper error handling
     const executeJob = async () => {
@@ -849,424 +849,9 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
       let result = "pending";
       try {
         // ═══════════════════════════════════════════════════════════════════════════
-        // 🚀 STEP 1: CLICK APPLY BUTTON - Find and click the "Apply now" button
+        // 🚀 DYNAMIC WORKFLOW SYSTEM - Handles unlimited question pages automatically
         // ═══════════════════════════════════════════════════════════════════════════
-        console.log("🖱️ STEP 1: Finding and clicking Apply button");
-        
-        // Wait for page to load
-        await new Promise(r => setTimeout(r, 3000));
-        
-        const easyApplySelectors = [
-          '#indeedApplyButton',                      // The actual button ID from your HTML
-          'button[data-testid="indeedApplyButton-test"]', // Button with test ID
-          'button[aria-label*="Apply now"]',         // Button with Apply now aria-label
-          'button.css-jiauqs',                       // Button with that specific class
-          '.ia-IndeedApplyButton button',            // Button inside the wrapper
-          'button:has(.jobsearch-IndeedApplyButton-newDesign)', // Button containing the span
-          'button[title=""][aria-label*="Apply"]'    // Button matching your exact structure
-        ];
-        
-        let applyBtn = await waitForAnyElement(easyApplySelectors, 10000);
-        if (!applyBtn) {
-          applyBtn = await waitForElementByText(['apply now', 'easily apply'], 5000);
-        }
-
-        if (!applyBtn) {
-          // Check if we're already on the application form (sometimes the page redirects directly)
-          const isAlreadyOnForm = document.querySelector('#mosaic-contactInfoModule') ||
-                                 document.querySelector('[data-testid="profile-location-page"]') ||
-                                 window.location.href.includes('smartapply.indeed.com');
-          
-          if (isAlreadyOnForm) {
-            console.log("✅ STEP 1 SUCCESS: Already on application form (direct redirect)");
-            // Skip to step 2
-          } else {
-            console.log("❌ STEP 1 FAILED: No apply button found");
-            result = "fail_no_apply_button";
-            return;
-          }
-        } else {
-
-        // Click the apply button
-        console.log("�️ Clicking apply button...");
-        // Validate the element before clicking
-        console.log("🔍 Found element details:", {
-          tagName: applyBtn.tagName,
-          id: applyBtn.id,
-          className: applyBtn.className,
-          textContent: applyBtn.textContent?.trim(),
-          isButton: applyBtn.tagName === 'BUTTON',
-          isVisible: applyBtn.offsetParent !== null,
-          isEnabled: !applyBtn.disabled
-        });
-
-        // Make sure we found an actual button element
-        if (applyBtn.tagName !== 'BUTTON') {
-          console.log("⚠️ Found element is not a button, looking for button inside...");
-          const buttonInside = applyBtn.querySelector('button');
-          if (buttonInside) {
-            applyBtn = buttonInside;
-            console.log("✅ Found actual button inside wrapper:", buttonInside);
-          } else {
-            console.log("❌ STEP 1 FAILED: Found element is not clickable button");
-            result = "fail_not_clickable_element";
-            return;
-          }
-        }
-
-        // Ensure button is clickable
-        if (!applyBtn.offsetParent || applyBtn.disabled) {
-          console.log("❌ STEP 1 FAILED: Button found but not clickable", {
-            visible: applyBtn.offsetParent !== null,
-            enabled: !applyBtn.disabled
-          });
-          result = "fail_button_not_clickable";
-          return;
-        }
-
-        // Click the apply button with better targeting
-        console.log("🖱️ Clicking apply button...");
-        applyBtn.scrollIntoView({ behavior: 'smooth', block: 'center' });
-        await new Promise(r => setTimeout(r, 500));
-        applyBtn.click();
-        
-        // ✅ STEP 1 VALIDATION: Wait for application form to appear
-        await new Promise(r => setTimeout(r, 3000));
-        
-        // Check if we're on an Indeed application form page
-        const isApplicationPage = window.location.href.includes('smartapply.indeed.com') ||
-                                 window.location.href.includes('form/profile') ||
-                                 document.querySelector('#mosaic-contactInfoModule') ||
-                                 document.querySelector('[data-testid="profile-location-page"]') ||
-                                 document.querySelector('form') ||
-                                 window.location.href !== job.jobLink;
-        
-        if (!isApplicationPage) {
-          console.log("❌ STEP 1 FAILED: Apply button clicked but no form appeared");
-          result = "fail_form_not_loaded";
-          return;
-        }
-        
-          console.log("✅ STEP 1 SUCCESS: Apply button clicked, form loaded");
-          console.log("📍 Current URL:", window.location.href);
-        }
-
-        // ═══════════════════════════════════════════════════════════════════════════
-        // 🚀 STEP 2: FILL LOCATION & EXPERIENCE - Fill out basic job info
-        // ═══════════════════════════════════════════════════════════════════════════
-        console.log("� STEP 2: Filling location and experience information");
-        
-        // Fill location fields
-        await fillContactInfo(job);
-        
-        // Look for experience/previous work fields dynamically by labels
-        const allInputs = document.querySelectorAll('input[type="text"], input[type="email"], input[type="tel"], textarea, select');
-        for (const input of allInputs) {
-          // Get label text to understand what field this is
-          let labelText = '';
-          const label = input.closest('label') || document.querySelector(`label[for="${input.id}"]`);
-          if (label) {
-            labelText = label.textContent.toLowerCase();
-          }
-          
-          // Check placeholder and name attributes too
-          const placeholder = (input.placeholder || '').toLowerCase();
-          const name = (input.name || '').toLowerCase();
-          const allText = `${labelText} ${placeholder} ${name}`;
-          
-          // Fill based on field type
-          if (allText.includes('company') && !input.value) {
-            input.value = job.companyName || 'Previous Company';
-            input.dispatchEvent(new Event('input', { bubbles: true }));
-            console.log("✅ Filled company field");
-          } else if (allText.includes('location') && !input.value) {
-            input.value = job.location || 'Previous Location';
-            input.dispatchEvent(new Event('input', { bubbles: true }));
-            console.log("✅ Filled location field");
-          } else if (allText.includes('experience') && !input.value) {
-            input.value = '3+ years of relevant experience';
-            input.dispatchEvent(new Event('input', { bubbles: true }));
-            console.log("✅ Filled experience field");
-          } else if (allText.includes('salary') && !input.value) {
-            input.value = 'Competitive';
-            input.dispatchEvent(new Event('input', { bubbles: true }));
-            console.log("✅ Filled salary field");
-          } else if (!input.value && input.type === 'text') {
-            input.value = 'N/A';
-            input.dispatchEvent(new Event('input', { bubbles: true }));
-          }
-        }
-        
-        console.log("✅ STEP 2 SUCCESS: Location and experience fields filled");
-
-        // ═══════════════════════════════════════════════════════════════════════════
-        // 🚀 STEP 3: CONTINUE WITH RESUME - Click continue to use existing Indeed resume
-        // ═══════════════════════════════════════════════════════════════════════════
-        console.log("📋 STEP 3: Looking for Continue button to proceed with resume");
-        
-        let continueBtn = null;
-        let attempts = 0;
-        
-        while (!continueBtn && attempts < 10) {
-          await new Promise(r => setTimeout(r, 1000));
-          attempts++;
-          
-          // Check if we're on the contact info page or resume selection page
-          const isResumeSelectionPage = document.querySelector('h1') && 
-            document.querySelector('h1').textContent.includes('Choose how to apply');
-          
-          if (isResumeSelectionPage) {
-            console.log("📋 On resume selection page - looking for resume Continue button");
-            
-            // Try the resume selection page Continue button first
-            continueBtn = document.querySelector('button[data-testid="continue-button"]');
-            if (continueBtn) {
-              console.log("✅ Found resume selection Continue button");
-              break;
-            }
-            
-            // Fallback for resume selection page
-            continueBtn = document.querySelector('button.mosaic-provider-module-apply-resume-selection-6xgesl');
-            if (continueBtn) {
-              console.log("✅ Found resume selection Continue button with CSS class");
-              break;
-            }
-          } else {
-            console.log("📝 On contact info page - looking for contact info Continue button");
-            
-            // Try more stable selectors for contact info page
-            const contactInfoSelectors = [
-              'button[data-testid*="continue"]',
-              'button.mosaic-provider-module-apply-contact-info-krg1j8',
-              'form button[type="submit"]',
-              'form button:not([type="button"])',
-              '.mosaic-provider-module button:contains("Continue")'
-            ];
-            
-            for (const selector of contactInfoSelectors) {
-              continueBtn = document.querySelector(selector);
-              if (continueBtn) {
-                console.log(`✅ Found contact info Continue button with selector: ${selector}`);
-                break;
-              }
-            }
-          }
-          
-          // Generic fallback - try text-based search for continue buttons
-          const allButtons = document.querySelectorAll('button, input[type="submit"], input[type="button"]');
-          for (const btn of allButtons) {
-            const text = (btn.textContent || btn.value || '').toLowerCase();
-            if (text.includes('continue') || text.includes('next') || text.includes('proceed')) {
-              continueBtn = btn;
-              console.log("✅ Found Continue button via text search:", text);
-              break;
-            }
-          }
-          
-          if (continueBtn) break;
-          
-          console.log(`🔄 Attempt ${attempts}/10 - Continue button not found yet...`);
-        }
-        
-        if (!continueBtn) {
-          console.log("❌ STEP 3 FAILED: No continue button found");
-          result = "fail_no_continue_button";
-          return;
-        }
-        
-        console.log("🖱️ Clicking Continue button...");
-        continueBtn.click();
-        
-        // ✅ STEP 3 VALIDATION: Wait for next page/form to load
-        await new Promise(r => setTimeout(r, 3000));
-        console.log("✅ STEP 3 SUCCESS: Continue button clicked");
-
-        // ═══════════════════════════════════════════════════════════════════════════
-        // 🚀 STEP 3.5: HANDLE EMPLOYER QUESTIONS - Fill out any employer questionnaire
-        // ═══════════════════════════════════════════════════════════════════════════
-        
-        // Wait and check if we're now on a questions page
-        await new Promise(r => setTimeout(r, 2000));
-        
-        // Check if we're on the employer questions page
-        const isQuestionsPage = document.querySelector('h1[data-testid="questions-heading"]') ||
-                               document.querySelector('.ia-Questions') ||
-                               document.querySelector('[id^="mosaic-provider-module-apply-questions"]');
-        
-        if (isQuestionsPage) {
-          console.log("📝 STEP 3.5: Detected employer questions page - filling out questions");
-          await fillEmployerQuestions();
-          
-          // Look for Continue button on questions page with multiple strategies
-          let questionsContinueBtn = null;
-          attempts = 0;
-          
-          while (!questionsContinueBtn && attempts < 8) {
-            await new Promise(r => setTimeout(r, 1000));
-            attempts++;
-            
-            // Try various continue button selectors for questions page
-            const questionsContinueSelectors = [
-              'button[data-testid*="Continue"]',
-              'button[class*="continue"]',
-              'form button[type="submit"]',
-              'button.mosaic-provider-module-apply-questions-6xgesl' // From your HTML
-            ];
-            
-            for (const selector of questionsContinueSelectors) {
-              questionsContinueBtn = document.querySelector(selector);
-              if (questionsContinueBtn) {
-                console.log(`✅ Found questions Continue button with selector: ${selector}`);
-                break;
-              }
-            }
-            
-            // Fallback: text-based search
-            if (!questionsContinueBtn) {
-              const allButtons = document.querySelectorAll('button');
-              for (const btn of allButtons) {
-                const text = (btn.textContent || '').toLowerCase().trim();
-                if (text === 'continue' || text === 'next' || text === 'proceed') {
-                  questionsContinueBtn = btn;
-                  console.log(`✅ Found Continue button via text search: "${text}"`);
-                  break;
-                }
-              }
-            }
-            
-            if (questionsContinueBtn) break;
-            console.log(`🔄 Attempt ${attempts}/8 - Questions Continue button not found yet...`);
-          }
-          
-          if (questionsContinueBtn) {
-            console.log("🖱️ Clicking Continue button on questions page...");
-            questionsContinueBtn.click();
-            await new Promise(r => setTimeout(r, 3000));
-            console.log("✅ STEP 3.5 SUCCESS: Questions filled and continued");
-          } else {
-            console.log("⚠️ No Continue button found on questions page, proceeding anyway...");
-          }
-        }
-
-        // ═══════════════════════════════════════════════════════════════════════════
-        // 🚀 STEP 4: SUBMIT APPLICATION & CHECK SUCCESS - Final submission and validation
-        // ═══════════════════════════════════════════════════════════════════════════
-        console.log("� STEP 4: Final application submission and success check");
-        
-        // Look for final submit button
-        let submitBtn = null;
-        attempts = 0;
-        
-        // Check if we're on the review page first
-        const isReviewPage = document.querySelector('.ia-Review') || document.body.textContent.includes('Please review your application');
-        if (isReviewPage) {
-          console.log("📋 Detected application review page");
-        }
-        
-        while (!submitBtn && attempts < 10) {
-          await new Promise(r => setTimeout(r, 1000));
-          attempts++;
-          
-          // Try dynamic selectors for the submit button
-          const submitSelectors = [
-            // Look for buttons in common submit areas
-            '.ia-BasePage-footer button',
-            '.ia-Review button',
-            '[class*="footer"] button',
-            '[class*="submit"] button',
-            // Look for buttons with submit-like styling
-            'button[class*="primary"]',
-            'button[class*="cta"]',
-            'button[class*="action"]',
-            // Generic button containers
-            'main button',
-            'footer button'
-          ];
-          
-          for (const selector of submitSelectors) {
-            try {
-              submitBtn = document.querySelector(selector);
-              if (submitBtn) {
-                console.log(`✅ Found submit button with selector: ${selector}`);
-                break;
-              }
-            } catch (e) {
-              // Ignore selector errors
-            }
-          }
-          
-          if (submitBtn) break;
-          
-          // Fallback: search all buttons by text content
-          const allButtons = document.querySelectorAll('button, input[type="submit"], input[type="button"]');
-          for (const btn of allButtons) {
-            const text = (btn.textContent || btn.value || '').toLowerCase().trim();
-            if (text.includes('submit your application') || text.includes('submit application') || 
-                text.includes('submit') || text.includes('apply now') || text.includes('send application')) {
-              submitBtn = btn;
-              console.log(`✅ Found submit button by text: "${text}"`);
-              break;
-            }
-          }
-          
-          if (submitBtn) break;
-        }
-        
-        if (submitBtn) {
-          console.log("🖱️ Clicking final submit button...");
-          submitBtn.click();
-          await new Promise(r => setTimeout(r, 2000));
-        }
-        
-        // ✅ STEP 4 VALIDATION: Check for success page/message
-        console.log("🔍 Checking for application success...");
-        let successFound = false;
-        attempts = 0;
-        
-        while (!successFound && attempts < 15) {
-          await new Promise(r => setTimeout(r, 1000));
-          attempts++;
-          
-          const pageText = document.body.textContent.toLowerCase();
-          const successKeywords = [
-            'application submitted',
-            'thank you for applying', 
-            'successfully applied',
-            'application received',
-            'we have received your application'
-          ];
-          
-          const successSelectors = [
-            '.success',
-            '.confirmation', 
-            '[data-testid*="success"]',
-            '[data-testid*="confirmation"]'
-          ];
-          
-          // Check text content
-          if (successKeywords.some(keyword => pageText.includes(keyword))) {
-            successFound = true;
-            result = "pass";
-            console.log("🎉 STEP 4 SUCCESS: Application submitted successfully!");
-            break;
-          }
-          
-          // Check CSS selectors
-          if (successSelectors.some(sel => document.querySelector(sel))) {
-            successFound = true;
-            result = "pass";
-            console.log("🎉 STEP 4 SUCCESS: Success page detected!");
-            break;
-          }
-          
-          console.log(`🔄 Attempt ${attempts}/15 - Still checking for success...`);
-        }
-        
-        if (!successFound) {
-          console.log("❌ STEP 4 TIMEOUT: No success confirmation found");
-          result = "fail_no_success_confirmation";
-        }
-
+        result = await runDynamicApplicationWorkflow();
 
       } catch (err) {
         // ─────────────────────────────────────────────────────────────────────────
@@ -1297,7 +882,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
                 console.error(`Attempt ${attempt} - Error sending job result:`, errorMsg);
                 
                 // Handle specific context invalidation errors
-                if ((errorMsg.includes("back/forward cache") || 
+                if ((errorMsg.includes("back/forward cache") ||
                      errorMsg.includes("receiving end does not exist") ||
                      errorMsg.includes("message channel is closed") ||
                      errorMsg.includes("Extension context invalidated")) && 
@@ -1346,6 +931,11 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
         sendJobResult();
         
         safeResponse({ status: "completed", result });
+      
+      // Execute the send function
+      sendJobResult();
+      
+      safeResponse({ status: "completed", result });
       } catch (error) {
         console.error("💥 Fatal error in job application workflow:", error);
         safeResponse({ status: "error", message: error.message, result: "fail_exception" });
@@ -1811,37 +1401,750 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
 /**
  * Fill employer questions dynamically based on question type and label
  */
-async function fillEmployerQuestions() {
-  console.log("📝 Starting to fill employer questions...");
+/**
+ * Wait for elements to be present in the DOM
+ */
+function waitForElements(selector, timeout = 10000) {
+  return new Promise((resolve, reject) => {
+    const startTime = Date.now();
+    
+    function checkForElements() {
+      const elements = document.querySelectorAll(selector);
+      if (elements.length > 0) {
+        console.log(`✅ Found ${elements.length} elements with selector: ${selector}`);
+        resolve(elements);
+      } else if (Date.now() - startTime > timeout) {
+        console.log(`⏰ Timeout waiting for elements: ${selector}`);
+        resolve(document.querySelectorAll(selector)); // Return empty NodeList
+      } else {
+        setTimeout(checkForElements, 100);
+      }
+    }
+    
+    checkForElements();
+  });
+}
+
+/**
+ * Wait for a single element to be present in the DOM
+ */
+function waitForElement(selector, timeout = 5000) {
+  return new Promise((resolve, reject) => {
+    const startTime = Date.now();
+    
+    function checkForElement() {
+      const element = document.querySelector(selector);
+      if (element) {
+        console.log(`✅ Found element with selector: ${selector}`);
+        resolve(element);
+      } else if (Date.now() - startTime > timeout) {
+        console.log(`⏰ Timeout waiting for element: ${selector}`);
+        resolve(null);
+      } else {
+        setTimeout(checkForElement, 100);
+      }
+    }
+    
+    checkForElement();
+  });
+}
+
+/**
+ * 🔍 PAGE SCRAPER - Map all form elements and their types
+ * This scrapes the page first to understand what we're dealing with
+ */
+async function scrapePageElements() {
+  console.log("🔍 ENHANCED SCRAPING: Analyzing page for all form elements with better classification...");
   
-  // Wait for questions to be fully loaded
+  const pageData = {
+    questions: [],
+    radioGroups: {},
+    textInputs: [],
+    textareas: [],
+    selects: [],
+    checkboxes: [],
+    dateInputs: [],
+    buttons: [],
+    relevantTypes: new Set() // Track only types we actually find
+  };
+  
+  // Wait for elements to load
   await new Promise(r => setTimeout(r, 1000));
   
-  let filledCount = 0;
+  // Find all question containers with enhanced selectors
+  const containers = document.querySelectorAll('.ia-Questions-item, [id^="q_"], [data-testid*="input-q_"], [class*="Questions-item"], .application-question, [class*="question"]');
+  
+  containers.forEach((container, index) => {
+    console.log(`📋 Analyzing container ${index + 1}...`);
+    
+    // Enhanced label detection
+    const labelElement = container.querySelector('label, legend, [data-testid*="label"], [data-testid*="rich-text"], span[data-testid*="rich-text"], .question-text, [class*="question-label"]');
+    const labelText = labelElement ? (labelElement.textContent || labelElement.innerText || '').toLowerCase().trim() : '';
+    
+    // Find input elements in this container with better detection
+    const inputs = container.querySelectorAll('input, textarea, select');
+    
+    inputs.forEach(input => {
+      const inputType = input.type || input.tagName.toLowerCase();
+      const elementData = {
+        container: index,
+        label: labelText,
+        element: input,
+        type: inputType,
+        name: input.name || '',
+        id: input.id || '',
+        value: input.value || '',
+        checked: input.checked || false,
+        placeholder: input.placeholder || '',
+        required: input.required || false
+      };
+      
+      // Track relevant types we actually find
+      pageData.relevantTypes.add(inputType);
+      
+      // Enhanced categorization with better input type detection
+      switch(inputType) {
+        case 'radio':
+          if (!pageData.radioGroups[input.name]) {
+            pageData.radioGroups[input.name] = {
+              label: labelText,
+              options: [],
+              questionType: classifyQuestionType(labelText)
+            };
+          }
+          pageData.radioGroups[input.name].options.push(elementData);
+          break;
+          
+        case 'text':
+        case 'email':
+        case 'tel':
+        case 'number':
+          pageData.textInputs.push({
+            ...elementData,
+            questionType: classifyQuestionType(labelText)
+          });
+          break;
+          
+        case 'date':
+          pageData.dateInputs.push({
+            ...elementData,
+            questionType: classifyQuestionType(labelText)
+          });
+          break;
+          
+        case 'checkbox':
+          pageData.checkboxes.push({
+            ...elementData,
+            questionType: classifyQuestionType(labelText)
+          });
+          break;
+          
+        default:
+          if (input.tagName.toLowerCase() === 'textarea') {
+            pageData.textareas.push({
+              ...elementData,
+              questionType: classifyQuestionType(labelText)
+            });
+          } else if (input.tagName.toLowerCase() === 'select') {
+            pageData.selects.push({
+              ...elementData,
+              questionType: classifyQuestionType(labelText)
+            });
+          }
+      }
+      
+      // Check for date inputs by placeholder or pattern
+      if (inputType === 'text' && (
+        input.placeholder?.includes('MM/DD/YYYY') || 
+        input.placeholder?.includes('date') ||
+        labelText.includes('date') ||
+        labelText.includes('available') ||
+        labelText.includes('start')
+      )) {
+        pageData.dateInputs.push({
+          ...elementData,
+          questionType: 'DATE_INPUT'
+        });
+      }
+    });
+    
+    // Add to questions array only if we have relevant content
+    if (labelText && inputs.length > 0) {
+      const questionType = classifyQuestionType(labelText);
+      pageData.questions.push({
+        container: index,
+        label: labelText,
+        inputTypes: Array.from(inputs).map(i => i.type || i.tagName.toLowerCase()),
+        questionType: questionType,
+        priority: getQuestionPriority(questionType) // Add priority for processing order
+      });
+    }
+  });
+  
+  // Sort questions by priority (handle high-priority questions first)
+  pageData.questions.sort((a, b) => b.priority - a.priority);
+  
+  // Find all buttons
+  const buttons = document.querySelectorAll('button, input[type="submit"], input[type="button"]');
+  buttons.forEach(btn => {
+    pageData.buttons.push({
+      element: btn,
+      text: (btn.textContent || btn.value || '').toLowerCase().trim(),
+      type: btn.type || 'button',
+      classes: btn.className || ''
+    });
+  });
+  
+  // Enhanced logging with relevancy info
+  console.log("📊 ENHANCED SCRAPE RESULTS:");
+  console.log(`   Questions: ${pageData.questions.length}`);
+  console.log(`   Radio Groups: ${Object.keys(pageData.radioGroups).length}`);
+  console.log(`   Text Inputs: ${pageData.textInputs.length}`);
+  console.log(`   Date Inputs: ${pageData.dateInputs.length}`);
+  console.log(`   Textareas: ${pageData.textareas.length}`);
+  console.log(`   Selects: ${pageData.selects.length}`);
+  console.log(`   Checkboxes: ${pageData.checkboxes.length}`);
+  console.log(`   Buttons: ${pageData.buttons.length}`);
+  console.log(`   Relevant Types Found: ${Array.from(pageData.relevantTypes).join(', ')}`);
+  
+  return pageData;
+}
+
+/**
+ * 🔥 VERSION 2.0 - AGGRESSIVE PROCESSOR with starter pattern filtering
+ */
+async function processScrapedElementsV2(pageData) {
+  console.log("🔥 VERSION 2.0 PROCESSING: Aggressive filtering with question starter patterns...");
+  
+  let processed = 0;
+  let skipped = 0;
+  let filtered_out = 0;
+  
+  // 🚫 AGGRESSIVE FILTERING - Only process questions that match our starter patterns
+  const knownTypes = new Set([
+    'WORK_AUTHORIZATION', 'COMMUTE', 'EXPERIENCE', 'DATE_INPUT', 
+    'SALARY', 'REASON_APPLYING', 'EDUCATION'
+  ]);
+  
+  // Filter out UNKNOWN questions completely - won't even try to process them
+  const matchedQuestions = pageData.questions.filter(q => {
+    if (q.questionType === 'UNKNOWN') {
+      filtered_out++;
+      console.log(`🚫 FILTERED OUT: "${q.label}" - doesn't match any starter pattern`);
+      return false;
+    }
+    return knownTypes.has(q.questionType);
+  });
+  
+  console.log(`📊 FILTERING RESULTS:`);
+  console.log(`   Total questions found: ${pageData.questions.length}`);
+  console.log(`   Matched starter patterns: ${matchedQuestions.length}`);
+  console.log(`   Filtered out (unknown): ${filtered_out}`);
+  console.log(`   Will process: ${matchedQuestions.length} questions`);
+  
+  // Process only the questions that matched our starter patterns
+  for (const question of matchedQuestions) {
+    console.log(`\n🎯 Processing [Priority ${question.priority}]: "${question.label}"`);
+    console.log(`🏷️ Matched pattern: ${question.questionType}`);
+    
+    try {
+      // 🔥 SERIES OF SWITCH CASES - Only handle confirmed pattern matches
+      switch(question.questionType) {
+        case 'WORK_AUTHORIZATION':
+          console.log('💼 Running WORK_AUTHORIZATION handler...');
+          if (await handleWorkAuthorization(question, pageData)) processed++;
+          else skipped++;
+          break;
+          
+        case 'COMMUTE':
+          console.log('🚗 Running COMMUTE handler...');
+          if (await handleCommuteQuestion(question, pageData)) processed++;
+          else skipped++;
+          break;
+          
+        case 'EXPERIENCE':
+          console.log('📈 Running EXPERIENCE handler...');
+          if (await handleExperienceQuestion(question, pageData)) processed++;
+          else skipped++;
+          break;
+          
+        case 'DATE_INPUT':
+          console.log('📅 Running DATE_INPUT handler...');
+          if (await handleDateInput(question, pageData)) processed++;
+          else skipped++;
+          break;
+          
+        case 'SALARY':
+          console.log('💰 Running SALARY handler...');
+          if (await handleSalaryQuestion(question, pageData)) processed++;
+          else skipped++;
+          break;
+          
+        case 'REASON_APPLYING':
+          console.log('📝 Running REASON_APPLYING handler...');
+          if (await handleReasonApplying(question, pageData)) processed++;
+          else skipped++;
+          break;
+          
+        case 'EDUCATION':
+          console.log('🎓 Running EDUCATION handler...');
+          if (await handleEducationQuestion(question, pageData)) processed++;
+          else skipped++;
+          break;
+          
+        default:
+          // This should never happen with our aggressive filtering
+          console.log(`❌ UNEXPECTED: Question type ${question.questionType} made it through filtering`);
+          skipped++;
+      }
+      
+      // Small delay between questions
+      await new Promise(r => setTimeout(r, 200));
+      
+    } catch (error) {
+      console.error(`❌ Error processing question "${question.label}":`, error.message);
+      skipped++;
+    }
+  }
+  
+  console.log(`\n🔥 VERSION 2.0 RESULTS:`);
+  console.log(`✅ Successfully processed: ${processed} questions`);
+  console.log(`⚠️ Failed to process: ${skipped} questions`);
+  console.log(`🚫 Filtered out (no pattern match): ${filtered_out} questions`);
+  console.log(`⚡ Processing efficiency: ${((processed / (processed + skipped)) * 100).toFixed(1)}% success rate`);
+  console.log(`🎯 Overall efficiency: ${((processed / pageData.questions.length) * 100).toFixed(1)}% of all questions handled`);
+  
+  return processed;
+}
+
+/**
+ * 🎯 SMART PROCESSOR - Use switch cases to handle different question types
+ */
+async function processScrapedElements(pageData) {
+  console.log("🎯 OPTIMIZED PROCESSING: Using filtered switch cases for relevant question types...");
+  
+  let processed = 0;
+  let skipped = 0;
+  
+  // Filter out only the question types we can actually handle to cut out unnecessary cases
+  const handledTypes = new Set([
+    'WORK_AUTHORIZATION', 'COMMUTE', 'EXPERIENCE', 'DATE_INPUT', 
+    'SALARY', 'REASON_APPLYING', 'SKILLS', 'EDUCATION'
+  ]);
+  
+  const relevantQuestions = pageData.questions.filter(q => 
+    handledTypes.has(q.questionType) || q.questionType === 'GENERIC'
+  );
+  
+  console.log(`� Processing ${relevantQuestions.length} relevant questions (skipping ${pageData.questions.length - relevantQuestions.length} irrelevant ones)`);
+  
+  // Process each relevant question using optimized switch cases
+  for (const question of relevantQuestions) {
+    console.log(`\n📝 Processing [Priority ${question.priority}]: "${question.label}"`);
+    console.log(`🏷️ Type: ${question.questionType}`);
+    
+    try {
+      // Optimized switch case - only handle types we know we need
+      switch(question.questionType) {
+        case 'WORK_AUTHORIZATION':
+          if (await handleWorkAuthorization(question, pageData)) processed++;
+          break;
+          
+        case 'COMMUTE':
+          if (await handleCommuteQuestion(question, pageData)) processed++;
+          break;
+          
+        case 'EXPERIENCE':
+          if (await handleExperienceQuestion(question, pageData)) processed++;
+          break;
+          
+        case 'DATE_INPUT':
+          if (await handleDateInput(question, pageData)) processed++;
+          break;
+          
+        case 'SALARY':
+          if (await handleSalaryQuestion(question, pageData)) processed++;
+          break;
+          
+        case 'REASON_APPLYING':
+          if (await handleReasonApplying(question, pageData)) processed++;
+          break;
+          
+        case 'SKILLS':
+          if (await handleSkillsQuestion(question, pageData)) processed++;
+          break;
+          
+        case 'EDUCATION':
+          if (await handleEducationQuestion(question, pageData)) processed++;
+          break;
+          
+        case 'GENERIC':
+          if (await handleGenericQuestion(question, pageData)) processed++;
+          break;
+          
+        default:
+          console.log(`⏭️ Skipping unsupported question type: ${question.questionType}`);
+          skipped++;
+      }
+      
+      // Small delay between questions
+      await new Promise(r => setTimeout(r, 200));
+      
+    } catch (error) {
+      console.error(`❌ Error processing question "${question.label}":`, error.message);
+      skipped++;
+    }
+  }
+  
+  console.log(`✅ Successfully processed ${processed} questions, skipped ${skipped} questions`);
+  console.log(`⚡ Algorithm efficiency: ${((processed / (processed + skipped)) * 100).toFixed(1)}% success rate`);
+  
+  return processed;
+}
+
+/**
+ * � VERSION 2.0 - SMART QUESTION CLASSIFIER with question starters and generic patterns
+ * Uses question beginnings to match patterns regardless of specific details
+ */
+function classifyQuestionType(label) {
+  const text = label.toLowerCase().trim();
+  
+  // 🔥 QUESTION STARTER PATTERNS - Match beginnings regardless of specifics
+  
+  // Work authorization - matches any country
+  if (text.startsWith('are you authorized to work') || 
+      text.startsWith('do you have authorization to work') ||
+      text.startsWith('are you legally authorized') ||
+      text.includes('visa') || text.includes('sponsorship') || text.includes('work permit')) {
+    return 'WORK_AUTHORIZATION';
+  }
+  
+  // Commute questions - matches any location/distance
+  if (text.startsWith('will you be able to reliably commute') ||
+      text.startsWith('are you able to commute') ||
+      text.startsWith('can you reliably commute') ||
+      text.startsWith('are you willing to commute') ||
+      text.startsWith('do you have reliable transportation')) {
+    return 'COMMUTE';
+  }
+  
+  // Generic "How many years" questions - matches any topic after "years"
+  if (text.startsWith('how many years') || 
+      text.startsWith('how many total years') ||
+      (text.includes('years') && text.includes('experience'))) {
+    return 'EXPERIENCE';
+  }
+  
+  // Availability/start date questions
+  if (text.startsWith('when are you available') ||
+      text.startsWith('when can you start') ||
+      text.startsWith('what is your availability') ||
+      text.includes('available to start') ||
+      text.includes('start date')) {
+    return 'DATE_INPUT';
+  }
+  
+  // Salary/compensation questions
+  if (text.startsWith('what is your desired salary') ||
+      text.startsWith('what are your salary expectations') ||
+      text.startsWith('what is your expected salary') ||
+      text.includes('compensation') || text.includes('pay rate')) {
+    return 'SALARY';
+  }
+  
+  // Reason for applying questions
+  if (text.startsWith('why are you interested') ||
+      text.startsWith('why do you want') ||
+      text.startsWith('what interests you') ||
+      text.includes('reason for applying') ||
+      text.includes('cover letter')) {
+    return 'REASON_APPLYING';
+  }
+  
+  // Education questions
+  if (text.startsWith('what is your highest level') ||
+      text.startsWith('what is your education') ||
+      text.startsWith('do you have a') && (text.includes('degree') || text.includes('diploma'))) {
+    return 'EDUCATION';
+  }
+  
+  // 🚫 AGGRESSIVE FILTERING - If it doesn't match our patterns, skip it
+  return 'UNKNOWN';
+}
+
+/**
+ * 🎯 PRIORITY SYSTEM - Assign priority scores to question types for optimal processing order
+ */
+function getQuestionPriority(questionType) {
+  const priorities = {
+    'WORK_AUTHORIZATION': 10, // Highest priority - often required
+    'COMMUTE': 9,            // High priority - location-based
+    'EXPERIENCE': 7,         // Medium-high priority
+    'DATE_INPUT': 6,         // Medium priority
+    'SKILLS': 5,             // Medium priority
+    'EDUCATION': 4,          // Medium-low priority
+    'SALARY': 3,             // Low priority
+    'REASON_APPLYING': 2,    // Low priority
+    'GENERIC': 1             // Lowest priority
+  };
+  
+  return priorities[questionType] || 1;
+}
+
+/**
+ * 🏷️ LEGACY CLASSIFIER - Keep for backward compatibility
+ */
+function classifyQuestion(label) {
+  return classifyQuestionType(label);
+}
+
+/**
+ * 🎯 QUESTION HANDLERS - Switch case handlers for each question type
+ */
+async function handleWorkAuthorization(question, pageData) {
+  console.log("🏢 Handling work authorization question...");
+  
+  // Find radio buttons for this question and select "Yes"
+  const radioGroup = Object.values(pageData.radioGroups).find(group => 
+    group.label === question.label
+  );
+  
+  if (radioGroup) {
+    const yesOption = radioGroup.options.find(opt => 
+      opt.element.value.toLowerCase() === 'yes' || 
+      opt.element.value === '1' ||
+      opt.element.nextElementSibling?.textContent?.toLowerCase().includes('yes')
+    );
+    
+    if (yesOption) {
+      await clickRadioButton(yesOption.element);
+      console.log("✅ Selected YES for work authorization");
+      return true;
+    }
+  }
+  
+  console.log("⚠️ Could not find work authorization radio buttons");
+  return false;
+}
+
+async function handleCommuteQuestion(question, pageData) {
+  console.log("🚗 Handling commute question...");
+  
+  const radioGroup = Object.values(pageData.radioGroups).find(group => 
+    group.label === question.label
+  );
+  
+  if (radioGroup) {
+    const yesOption = radioGroup.options.find(opt => 
+      opt.element.value.toLowerCase() === 'yes' || 
+      opt.element.value === '1' ||
+      opt.element.nextElementSibling?.textContent?.toLowerCase().includes('yes')
+    );
+    
+    if (yesOption) {
+      await clickRadioButton(yesOption.element);
+      console.log("✅ Selected YES for commute question");
+      return true;
+    }
+  }
+  
+  console.log("⚠️ Could not find commute radio buttons");
+  return false;
+}
+
+async function handleExperienceQuestion(question, pageData) {
+  console.log("💼 Handling experience question...");
+  
+  // Handle number inputs for years of experience
+  const textInput = pageData.textInputs.find(input => 
+    input.label === question.label && (input.type === 'number' || input.type === 'text')
+  );
+  
+  if (textInput) {
+    const experienceValue = getExperienceValue(question.label);
+    textInput.element.value = experienceValue;
+    textInput.element.dispatchEvent(new Event('input', { bubbles: true }));
+    textInput.element.dispatchEvent(new Event('change', { bubbles: true }));
+    console.log(`✅ Filled experience: ${experienceValue} years`);
+    return true;
+  }
+  
+  console.log("⚠️ Could not find experience input field");
+  return false;
+}
+
+async function handleDateInput(question, pageData) {
+  console.log("📅 Handling date input question...");
+  
+  // Look for date inputs in multiple ways
+  const dateInput = pageData.dateInputs.find(input => 
+    input.label === question.label
+  ) || pageData.textInputs.find(input => 
+    input.label === question.label && (
+      input.placeholder?.includes('date') || 
+      input.placeholder?.includes('MM/DD/YYYY')
+    )
+  );
+  
+  if (dateInput) {
+    const dateValue = getSmartDateValue(question.label, dateInput.type);
+    dateInput.element.value = dateValue;
+    dateInput.element.dispatchEvent(new Event('input', { bubbles: true }));
+    dateInput.element.dispatchEvent(new Event('change', { bubbles: true }));
+    console.log(`✅ Filled date: ${dateValue}`);
+    return true;
+  }
+  
+  console.log("⚠️ Could not find date input field");
+  return false;
+}
+async function handleSalaryQuestion(question, pageData) {
+  console.log("💰 Handling salary question...");
+  
+  const textInput = pageData.textInputs.find(input => input.label === question.label);
+  if (textInput) {
+    const salaryValue = getSalaryValue(question.label);
+    textInput.element.value = salaryValue;
+    textInput.element.dispatchEvent(new Event('input', { bubbles: true }));
+    textInput.element.dispatchEvent(new Event('change', { bubbles: true }));
+    console.log(`✅ Filled salary: ${salaryValue}`);
+    return true;
+  }
+  
+  console.log("⚠️ Could not find salary input field");
+  return false;
+}
+
+async function handleReasonApplying(question, pageData) {
+  console.log("📝 Handling reason for applying...");
+  
+  const textarea = pageData.textareas.find(ta => ta.label === question.label);
+  if (textarea) {
+    const reasonText = getReasonText(question.label);
+    textarea.element.value = reasonText;
+    textarea.element.dispatchEvent(new Event('input', { bubbles: true }));
+    textarea.element.dispatchEvent(new Event('change', { bubbles: true }));
+    console.log("✅ Filled reason for applying");
+    return true;
+  }
+  
+  console.log("⚠️ Could not find reason textarea");
+  return false;
+}
+
+async function handleSkillsQuestion(question, pageData) {
+  console.log("🛠️ Handling skills question...");
+  
+  const textarea = pageData.textareas.find(ta => ta.label === question.label) ||
+                   pageData.textInputs.find(input => input.label === question.label);
+  
+  if (textarea) {
+    const skillsText = getSkillsText(question.label);
+    textarea.element.value = skillsText;
+    textarea.element.dispatchEvent(new Event('input', { bubbles: true }));
+    textarea.element.dispatchEvent(new Event('change', { bubbles: true }));
+    console.log("✅ Filled skills information");
+    return true;
+  }
+  
+  console.log("⚠️ Could not find skills input field");
+  return false;
+}
+
+async function handleEducationQuestion(question, pageData) {
+  console.log("🎓 Handling education question...");
+  
+  // Handle selects for degree levels
+  const selectInput = pageData.selects.find(select => select.label === question.label);
+  if (selectInput) {
+    const educationValue = getEducationValue(question.label);
+    selectInput.element.value = educationValue;
+    selectInput.element.dispatchEvent(new Event('change', { bubbles: true }));
+    console.log(`✅ Selected education: ${educationValue}`);
+    return true;
+  }
+  
+  // Handle text inputs for school names, etc.
+  const textInput = pageData.textInputs.find(input => input.label === question.label);
+  if (textInput) {
+    const educationText = getEducationText(question.label);
+    textInput.element.value = educationText;
+    textInput.element.dispatchEvent(new Event('input', { bubbles: true }));
+    textInput.element.dispatchEvent(new Event('change', { bubbles: true }));
+    console.log(`✅ Filled education: ${educationText}`);
+    return true;
+  }
+  
+  console.log("⚠️ Could not find education input field");
+  return false;
+}
+
+async function handleGenericQuestion(question, pageData) {
+  console.log("❓ Handling generic question...");
+  
+  // Try radio buttons first
+  const radioGroup = Object.values(pageData.radioGroups).find(group => 
+    group.label === question.label
+  );
+  
+  if (radioGroup && radioGroup.options.length > 0) {
+    // Try to select a reasonable option (Yes > first option)
+    const yesOption = radioGroup.options.find(opt => 
+      opt.element.value.toLowerCase() === 'yes' || 
+      opt.element.value === '1'
+    ) || radioGroup.options[0];
+    
+    await clickRadioButton(yesOption.element);
+    console.log("✅ Selected option for generic question");
+    return true;
+  }
+  
+  // Try text inputs
+  const textInput = pageData.textInputs.find(input => input.label === question.label);
+  if (textInput) {
+    textInput.element.value = 'N/A';
+    textInput.element.dispatchEvent(new Event('input', { bubbles: true }));
+    console.log("✅ Filled generic text input");
+    return true;
+  }
+  
+  console.log("⚠️ Could not handle generic question");
+  return false;
+}
+
+async function fillEmployerQuestions() {
+  console.log("📝 NEW APPROACH: Starting employer questions with page scraping...");
   
   try {
-    // Find all question containers
-    const questionContainers = document.querySelectorAll('.ia-Questions-item, [id^="q_"]');
-    console.log(`📋 Found ${questionContainers.length} question containers`);
+    // Step 1: Scrape the entire page to map all elements
+    const pageData = await scrapePageElements();
+    
+    // Step 2: Process using VERSION 2.0 aggressive filtering with starter patterns
+    const processed = await processScrapedElementsV2(pageData);
     
     for (let i = 0; i < questionContainers.length; i++) {
       const container = questionContainers[i];
       console.log(`\n🔍 Processing question ${i + 1}/${questionContainers.length}`);
       
       try {
-        // Get question label/text
-        const labelElement = container.querySelector('label, legend, [data-testid*="label"]');
+        // Wait for question label/text to be available using multiple dynamic selectors
+        console.log("⏳ Waiting for question label...");
+        const labelElement = await waitForElementInContainer(container, 'label, legend, [data-testid*="label"], [data-testid*="rich-text"], span[data-testid*="rich-text"]');
         const labelText = labelElement ? 
           (labelElement.textContent || labelElement.innerText || '').toLowerCase().trim() : '';
         
         console.log(`📝 Question label: "${labelText}"`);
         
-        // Check for different input types and fill accordingly
-        await fillQuestionByType(container, labelText);
-        filledCount++;
+        if (labelText) {
+          // Check for different input types and fill accordingly
+          await fillQuestionByType(container, labelText);
+          filledCount++;
+        } else {
+          console.log("⚠️ No label found for question container");
+        }
         
         // Small delay between questions
-        await new Promise(r => setTimeout(r, 200));
+        await new Promise(r => setTimeout(r, 300));
         
       } catch (questionError) {
         console.error(`❌ Error processing question ${i + 1}:`, questionError.message);
@@ -1852,9 +2155,6 @@ async function fillEmployerQuestions() {
     
     // After filling all questions, look for and click the continue button
     console.log("🔍 Looking for Continue button after filling questions...");
-    
-    // Wait a moment for any dynamic updates
-    await new Promise(r => setTimeout(r, 1000));
     
     const continueSelectors = [
       // Generic selectors that should work across different pages
@@ -1870,25 +2170,30 @@ async function fillEmployerQuestions() {
     
     let continueButton = null;
     
-    // First try CSS selectors
+    // Wait for Continue button to be available using promises
+    console.log("⏳ Waiting for Continue button to be available...");
     for (const selector of continueSelectors) {
       try {
-        continueButton = document.querySelector(selector);
+        continueButton = await waitForElement(selector, 3000);
         if (continueButton) {
           console.log(`✅ Found Continue button with selector: ${selector}`);
           break;
         }
       } catch (e) {
-        // Ignore selector errors
+        // Ignore selector errors and try next selector
+     
       }
     }
     
-    // If no button found, search by text content
+    // If no button found, wait for buttons to load and search by text content
     if (!continueButton) {
+      console.log("⏳ Waiting for buttons to load for text-based search...");
+      await new Promise(r => setTimeout(r, 1000)); // Wait for buttons to render
+      
       const allButtons = document.querySelectorAll('button, input[type="submit"], input[type="button"]');
       for (const btn of allButtons) {
         const text = (btn.textContent || btn.value || '').toLowerCase().trim();
-        if (text.includes('continue') || text.includes('next') || text.includes('proceed')) {
+        if (text.includes('continue') || text.includes('next') || text.includes('proceed') || text.includes('apply anyway')) {
           continueButton = btn;
           console.log(`✅ Found Continue button by text: "${text}"`);
           break;
@@ -1919,11 +2224,51 @@ async function fillEmployerQuestions() {
 /**
  * Fill individual question based on its type and content
  */
+/**
+ * Wait for element within a container
+ */
+function waitForElementInContainer(container, selector, timeout = 3000) {
+  return new Promise((resolve) => {
+    const startTime = Date.now();
+    
+    function checkForElement() {
+      const element = container.querySelector(selector);
+      if (element) {
+        resolve(element);
+      } else if (Date.now() - startTime > timeout) {
+        resolve(null);
+      } else {
+        setTimeout(checkForElement, 50);
+      }
+    }
+    
+    checkForElement();
+  });
+}
+
 async function fillQuestionByType(container, labelText) {
   console.log(`🔍 Analyzing question container for: "${labelText}"`);
   
-  // 1. TEXT INPUTS (address, city, state, zip, etc.)
-  const textInput = container.querySelector('input[type="text"], input:not([type]), input[data-testid*="input"]');
+  // 1. NUMBER INPUTS (years of experience, age, etc.) - Check first since they're also text inputs
+  console.log("⏳ Waiting for number input...");
+  const numberInput = await waitForElementInContainer(container, 'input[type="number"], input[inputmode="numeric"], input[inputmode="text"][min], input[id*="number-input"], input[data-testid*="input"][min]');
+  if (numberInput) {
+    console.log(`📝 Found number input for: "${labelText}", current value: "${numberInput.value}"`);
+    if (!numberInput.value) {
+      const value = getNumberInputValue(labelText);
+      if (value) {
+        await fillInputSafely(numberInput, value, labelText);
+        return;
+      }
+    } else {
+      console.log(`⚠️ Number input already has value: "${numberInput.value}"`);
+      return;
+    }
+  }
+
+  // 2. TEXT INPUTS (address, city, state, zip, etc.)
+  console.log("⏳ Waiting for text input...");
+  const textInput = await waitForElementInContainer(container, 'input[type="text"], input:not([type]), input[data-testid*="input"]:not([min])');
   if (textInput) {
     console.log(`📝 Found text input for: "${labelText}", current value: "${textInput.value}"`);
     if (!textInput.value) {
@@ -1938,8 +2283,9 @@ async function fillQuestionByType(container, labelText) {
     }
   }
   
-  // 2. TEXTAREA (desired pay, cover letter text, etc.)
-  const textarea = container.querySelector('textarea');
+  // 3. TEXTAREA (visa questions, cover letter text, etc.)
+  console.log("⏳ Waiting for textarea...");
+  const textarea = await waitForElementInContainer(container, 'textarea, input[id*="rich-text-question"]');
   if (textarea) {
     console.log(`📝 Found textarea for: "${labelText}", current value: "${textarea.value}"`);
     if (!textarea.value) {
@@ -1954,8 +2300,9 @@ async function fillQuestionByType(container, labelText) {
     }
   }
   
-  // 3. SELECT DROPDOWNS (country, state, etc.)
-  const select = container.querySelector('select');
+  // 4. SELECT DROPDOWNS (country, state, etc.)
+  console.log("⏳ Waiting for select dropdown...");
+  const select = await waitForElementInContainer(container, 'select');
   if (select) {
     console.log(`📝 Found select dropdown for: "${labelText}", current value: "${select.value}"`);
     if (!select.value || select.value === '') {
@@ -1972,8 +2319,10 @@ async function fillQuestionByType(container, labelText) {
     }
   }
   
-  // 4. RADIO BUTTONS
-  const radioButtons = container.querySelectorAll('input[type="radio"]');
+  // 5. RADIO BUTTONS (including single-select questions)
+  console.log("⏳ Waiting for radio buttons...");
+  await new Promise(r => setTimeout(r, 200)); // Small delay for radio buttons to render
+  const radioButtons = container.querySelectorAll('input[type="radio"], input[id*="single-select-question"]');
   if (radioButtons.length > 0) {
     console.log(`📝 Found ${radioButtons.length} radio buttons for: "${labelText}"`);
     // Check if any radio is already selected
@@ -1992,7 +2341,9 @@ async function fillQuestionByType(container, labelText) {
     }
   }
   
-  // 5. CHECKBOXES
+  // 6. CHECKBOXES
+  console.log("⏳ Waiting for checkboxes...");
+  await new Promise(r => setTimeout(r, 200)); // Small delay for checkboxes to render
   const checkboxes = container.querySelectorAll('input[type="checkbox"]');
   if (checkboxes.length > 0) {
     const shouldCheck = getCheckboxValue(labelText);
@@ -2008,24 +2359,9 @@ async function fillQuestionByType(container, labelText) {
     }
   }
   
-  // 6. NUMBER INPUTS (years of experience, salary, etc.)
-  const numberInput = container.querySelector('input[type="number"], input[inputmode="numeric"], input[inputmode="text"][min], input[id*="number-input"]');
-  if (numberInput) {
-    console.log(`📝 Found number input for: "${labelText}", current value: "${numberInput.value}"`);
-    if (!numberInput.value) {
-      const value = getNumberInputValue(labelText);
-      if (value) {
-        await fillInputSafely(numberInput, value, labelText);
-        return;
-      }
-    } else {
-      console.log(`⚠️ Number input already has value: "${numberInput.value}"`);
-      return;
-    }
-  }
-
   // 7. DATE INPUTS
-  const dateInput = container.querySelector('input[placeholder*="MM/DD/YYYY"], input[type="date"]');
+  console.log("⏳ Waiting for date inputs...");
+  const dateInput = await waitForElementInContainer(container, 'input[placeholder*="MM/DD/YYYY"], input[type="date"]');
   if (dateInput && !dateInput.value) {
     const dateValue = getDateValue(labelText);
     if (dateValue) {
@@ -2119,7 +2455,9 @@ function getTextInputValue(labelText) {
   if (text.includes('referred') || text.includes('referral') || text.includes('how did you hear')) {
     return 'Online job search';
   }
-  
+  if(text.includes("How many years ")){
+    return "4"
+  }
   // Salary/compensation
   if (text.includes('salary') || text.includes('wage') || text.includes('pay') || text.includes('compensation')) {
     return 'Competitive/Negotiable';
@@ -2190,6 +2528,12 @@ function getTextareaValue(labelText) {
   if (text.includes('why do you want') || text.includes('why are you interested')) {
     return 'This role aligns perfectly with my career goals and offers the opportunity to utilize my skills while contributing to a dynamic team.';
   }
+  
+  // Indeed's "Reason for applying" question
+  if (text.includes('reason for applying') || text.includes('reason for') || text.includes('applying')) {
+    return 'I am drawn to this position because it offers an excellent opportunity to utilize my skills and experience while contributing to a growing organization. The role aligns with my career goals and I am excited about the potential to make a meaningful impact on the team.';
+  }
+  
   if (text.includes('experience') || text.includes('background') || text.includes('relevant')) {
     return 'I have relevant experience in this field with a proven track record of success. I am committed to delivering quality results and continuous learning.';
   }
@@ -2309,6 +2653,21 @@ function getRadioValue(labelText, radioButtons) {
       radio.nextElementSibling?.textContent?.toLowerCase().includes('yes')
     );
     return yesOption || radioButtons[0]; // Default to first option if "Yes" not found
+  }
+
+  if(text.includes("Will you be able to reliably commute")){
+    const yesOption = Array.from(radioButtons).find(radio => 
+      radio.value === '1' || radio.value.toLowerCase() === 'yes' || 
+      radio.nextElementSibling?.textContent?.toLowerCase().includes('yes')
+    );
+    return yesOption || radioButtons[0];
+  }
+  if(text.includes("Are you authorized to work in the?")){
+    const yesOption = Array.from(radioButtons).find(radio => 
+      radio.value === '1' || radio.value.toLowerCase() === 'yes' || 
+      radio.nextElementSibling?.textContent?.toLowerCase().includes('yes')
+    );
+    return yesOption || radioButtons[0];
   }
   
   // Age/eligibility questions - including employment eligibility
@@ -2490,27 +2849,650 @@ function getCheckboxValue(labelText) {
 /**
  * Get appropriate date value
  */
+/**
+ * 📅 ENHANCED DATE HANDLER - Generate appropriate dates based on context
+ */
+function getSmartDateValue(labelText, inputType = 'text') {
+  const text = labelText.toLowerCase();
+  const today = new Date();
+  
+  // Start date / Available date - typically 1-2 weeks from now for job applications
+  if (text.includes('available') || text.includes('start') || text.includes('when can you start')) {
+    const startDate = new Date(today);
+    startDate.setDate(today.getDate() + 10); // 10 days from now (business-friendly)
+    return formatDateForInput(startDate, inputType);
+  }
+  
+  // Birth date - reasonable default for job applications
+  if (text.includes('birth') || text.includes('dob') || text.includes('date of birth')) {
+    const birthDate = new Date(1990, 0, 15); // January 15, 1990 (32+ years old)
+    return formatDateForInput(birthDate, inputType);
+  }
+  
+  // Education dates (graduation, etc.)
+  if (text.includes('graduation') || text.includes('completed') || text.includes('finished')) {
+    const gradDate = new Date(2020, 4, 15); // May 15, 2020
+    return formatDateForInput(gradDate, inputType);
+  }
+  
+  // Employment history dates
+  if (text.includes('employment') || text.includes('worked') || text.includes('job')) {
+    if (text.includes('start') || text.includes('began')) {
+      const startDate = new Date(2021, 0, 1); // January 1, 2021
+      return formatDateForInput(startDate, inputType);
+    }
+    if (text.includes('end') || text.includes('left') || text.includes('finish')) {
+      const endDate = new Date(2023, 11, 31); // December 31, 2023
+      return formatDateForInput(endDate, inputType);
+    }
+  }
+  
+  // Default to today's date
+  return formatDateForInput(today, inputType);
+}
+
+/**
+ * 🔧 DATE FORMATTER - Format date appropriately for different input types
+ */
+function formatDateForInput(date, inputType) {
+  switch(inputType) {
+    case 'date':
+      // HTML5 date inputs expect YYYY-MM-DD format
+      return date.toISOString().split('T')[0];
+      
+    case 'text':
+    default:
+      // Text inputs typically expect MM/DD/YYYY format in US
+      return date.toLocaleDateString('en-US', { 
+        month: '2-digit', 
+        day: '2-digit', 
+        year: 'numeric' 
+      });
+  }
+}
+
+// Legacy function for backward compatibility
 function getDateValue(labelText) {
+  return getSmartDateValue(labelText, 'text');
+}
+
+/**
+ * 🎯 SMART VALUE GENERATORS - Generate appropriate responses based on question context
+ */
+function getExperienceValue(labelText) {
   const text = labelText.toLowerCase();
   
-  if (text.includes('available') || text.includes('start')) {
-    // Available to start immediately or within 2 weeks
-    const startDate = new Date();
-    startDate.setDate(startDate.getDate() + 14); // 2 weeks from now
-    return startDate.toLocaleDateString('en-US', { 
-      month: '2-digit', 
-      day: '2-digit', 
-      year: 'numeric' 
-    });
+  // Extract any specific technology or skill mentioned
+  if (text.includes('specific') || text.includes('relevant')) {
+    return '2'; // Conservative for specific experience
+  }
+  if (text.includes('total') || text.includes('overall')) {
+    return '5'; // More generous for total experience
   }
   
-  if (text.includes('birth') || text.includes('dob')) {
-    return '01/01/1990'; // Generic DOB
+  return '3'; // Default safe value
+}
+
+function getSalaryValue(labelText) {
+  const text = labelText.toLowerCase();
+  
+  if (text.includes('expected') || text.includes('desired')) {
+    return 'Competitive salary based on market rates';
+  }
+  if (text.includes('minimum') || text.includes('lowest')) {
+    return 'Open to discussion';
+  }
+  if (text.includes('range')) {
+    return '$50,000 - $80,000';
   }
   
-  return new Date().toLocaleDateString('en-US', { 
-    month: '2-digit', 
-    day: '2-digit', 
-    year: 'numeric' 
-  });
+  return 'Competitive';
+}
+
+function getReasonText(labelText) {
+  const reasons = [
+    'I am excited about this opportunity and believe my skills align well with the role requirements.',
+    'This position matches my career goals and I am eager to contribute to your team.',
+    'I am passionate about the work you do and would love to be part of your organization.',
+    'My background and experience make me a strong candidate for this role.'
+  ];
+  
+  // Return a random reason to appear more natural
+  return reasons[Math.floor(Math.random() * reasons.length)];
+}
+
+function getSkillsText(labelText) {
+  const text = labelText.toLowerCase();
+  
+  if (text.includes('technical') || text.includes('programming')) {
+    return 'JavaScript, Python, HTML/CSS, React, Node.js, SQL, Git';
+  }
+  if (text.includes('soft') || text.includes('communication')) {
+    return 'Strong communication, teamwork, problem-solving, and project management skills';
+  }
+  if (text.includes('relevant')) {
+    return 'Relevant skills and experience as detailed in my resume';
+  }
+  
+  return 'Please see resume for detailed skills and qualifications';
+}
+
+function getEducationValue(labelText) {
+  const text = labelText.toLowerCase();
+  
+  if (text.includes('level') || text.includes('degree')) {
+    return "Bachelor's degree"; // Most common requirement
+  }
+  if (text.includes('field') || text.includes('major')) {
+    return 'Computer Science';
+  }
+  
+  return "Bachelor's";
+}
+
+function getEducationText(labelText) {
+  const text = labelText.toLowerCase();
+  
+  if (text.includes('school') || text.includes('university')) {
+    return 'State University';
+  }
+  if (text.includes('gpa')) {
+    return '3.5';
+  }
+  if (text.includes('year') && text.includes('graduation')) {
+    return '2020';
+  }
+  
+  return 'As listed on resume';
+}
+
+/**
+ * 🔧 ENHANCED RADIO BUTTON CLICKER - Better radio button interaction
+ */
+async function clickRadioButton(radioElement) {
+  try {
+    // Focus the element first
+    radioElement.focus();
+    await new Promise(r => setTimeout(r, 100));
+    
+    // Set checked property
+    radioElement.checked = true;
+    
+    // Click the element
+    radioElement.click();
+    
+    // Dispatch events to ensure proper handling
+    radioElement.dispatchEvent(new Event('change', { bubbles: true }));
+    radioElement.dispatchEvent(new Event('input', { bubbles: true }));
+    
+    // Small delay to let changes register
+    await new Promise(r => setTimeout(r, 200));
+    
+    return true;
+    
+  } catch (error) {
+    console.error('Error clicking radio button:', error.message);
+    return false;
+  }
+}
+
+/**
+ * ═══════════════════════════════════════════════════════════════════════════
+ * 🚀 DYNAMIC APPLICATION WORKFLOW SYSTEM
+ * ═══════════════════════════════════════════════════════════════════════════
+ * Handles unlimited question pages and workflows automatically
+ */
+
+/**
+ * Main dynamic workflow that handles unlimited question pages
+ */
+async function runDynamicApplicationWorkflow() {
+  console.log("🚀 Starting dynamic application workflow...");
+  
+  try {
+    // Step 1: Click Apply button if not already on form
+    if (!window.location.href.includes('smartapply.indeed.com')) {
+      await clickApplyButton();
+    }
+    
+    // Step 2: Run the unlimited workflow loop
+    await runUnlimitedWorkflowLoop();
+    
+    // Step 3: Check for final success
+    const success = await checkApplicationSuccess();
+    return success ? "pass" : "fail_no_success_confirmation";
+    
+  } catch (error) {
+    console.error("❌ Dynamic workflow failed:", error);
+    return "fail_workflow_error";
+  }
+}
+
+/**
+ * Click the Apply button on job posting page
+ */
+async function clickApplyButton() {
+  console.log("🖱️ STEP 1: Finding and clicking Apply button");
+  
+  await new Promise(r => setTimeout(r, 3000));
+  
+  const easyApplySelectors = [
+    '#indeedApplyButton',
+    'button[data-testid="indeedApplyButton-test"]', 
+    'button[aria-label*="Apply now"]',
+    'button.css-jiauqs',
+    '.ia-IndeedApplyButton button',
+    'button:has(.jobsearch-IndeedApplyButton-newDesign)',
+    'button[title=""][aria-label*="Apply"]'
+  ];
+  
+  let applyBtn = await waitForAnyElement(easyApplySelectors, 10000);
+  if (!applyBtn) {
+    applyBtn = await waitForElementByText(['apply now', 'easily apply', 'apply anyway'], 5000);
+  }
+
+  if (!applyBtn) {
+    const isAlreadyOnForm = document.querySelector('#mosaic-contactInfoModule') ||
+                           document.querySelector('[data-testid="profile-location-page"]') ||
+                           window.location.href.includes('smartapply.indeed.com');
+    
+    if (isAlreadyOnForm) {
+      console.log("✅ Already on application form (direct redirect)");
+      return;
+    } else {
+      throw new Error("No apply button found");
+    }
+  }
+
+  // Validate and click the apply button
+  if (applyBtn.tagName !== 'BUTTON') {
+    const buttonInside = applyBtn.querySelector('button');
+    if (buttonInside) {
+      applyBtn = buttonInside;
+    } else {
+      throw new Error("Found element is not clickable button");
+    }
+  }
+
+  if (!applyBtn.offsetParent || applyBtn.disabled) {
+    throw new Error("Button found but not clickable");
+  }
+
+  console.log("🖱️ Clicking apply button...");
+  applyBtn.scrollIntoView({ behavior: 'smooth', block: 'center' });
+  await new Promise(r => setTimeout(r, 500));
+  applyBtn.click();
+  
+  // Wait for form to load
+  await new Promise(r => setTimeout(r, 3000));
+  
+  const isApplicationPage = window.location.href.includes('smartapply.indeed.com') ||
+                           window.location.href.includes('form/profile') ||
+                           document.querySelector('#mosaic-contactInfoModule') ||
+                           document.querySelector('[data-testid="profile-location-page"]') ||
+                           document.querySelector('form');
+  
+  if (!isApplicationPage) {
+    throw new Error("Apply button clicked but no form appeared");
+  }
+  
+  console.log("✅ STEP 1 SUCCESS: Apply button clicked, form loaded");
+}
+
+/**
+ * The unlimited workflow loop that handles any number of pages
+ */
+async function runUnlimitedWorkflowLoop() {
+  console.log("🔄 Starting unlimited workflow loop...");
+  
+  let pageCount = 0;
+  let maxPages = 20; // Safety limit to prevent infinite loops
+  let consecutiveFailures = 0;
+  
+  while (pageCount < maxPages && consecutiveFailures < 3) {
+    pageCount++;
+    console.log(`\n📄 Processing page ${pageCount}...`);
+    
+    try {
+      // Check if we've reached the final success page
+      if (await isSuccessPage()) {
+        console.log("🎉 Reached success page - workflow complete!");
+        return;
+      }
+      
+      // Process current page
+      const pageProcessed = await processCurrentPage();
+      
+      if (pageProcessed) {
+        consecutiveFailures = 0;
+        
+        // Try to proceed to next page
+        const proceededToNext = await proceedToNextPage();
+        
+        if (!proceededToNext) {
+          console.log("⚠️ Could not proceed to next page - might be final page");
+          break;
+        }
+        
+        // Wait for next page to load
+        await new Promise(r => setTimeout(r, 2000));
+        
+      } else {
+        consecutiveFailures++;
+        console.log(`⚠️ Page ${pageCount} not processed (failure ${consecutiveFailures}/3)`);
+        
+        // Try to proceed anyway
+        const proceededToNext = await proceedToNextPage();
+        if (!proceededToNext) {
+          break;
+        }
+        await new Promise(r => setTimeout(r, 2000));
+      }
+      
+    } catch (error) {
+      console.error(`❌ Error on page ${pageCount}:`, error);
+      consecutiveFailures++;
+      
+      // Try to recover by proceeding to next page
+      try {
+        await proceedToNextPage();
+        await new Promise(r => setTimeout(r, 2000));
+      } catch (recoverError) {
+        console.error("❌ Recovery failed:", recoverError);
+        break;
+      }
+    }
+  }
+  
+  if (pageCount >= maxPages) {
+    console.log("⚠️ Reached maximum page limit");
+  }
+  
+  if (consecutiveFailures >= 3) {
+    console.log("⚠️ Too many consecutive failures");
+  }
+  
+  console.log(`✅ Workflow loop completed - processed ${pageCount} pages`);
+}
+
+/**
+ * Process the current page by filling forms and answering questions
+ */
+async function processCurrentPage() {
+  console.log("🔍 Analyzing current page...");
+  
+  let processedSomething = false;
+  
+  try {
+    // Fill contact information if present
+    if (await hasContactInfo()) {
+      console.log("📝 Processing contact information...");
+      await fillContactInfo();
+      processedSomething = true;
+    }
+    
+    // Fill employer questions if present  
+    if (await hasEmployerQuestions()) {
+      console.log("📝 Processing employer questions...");
+      await fillEmployerQuestions();
+      processedSomething = true;
+    }
+    
+    // Handle resume selection if present
+    if (await hasResumeSelection()) {
+      console.log("📝 Processing resume selection...");
+      await selectResume();
+      processedSomething = true;
+    }
+    
+    // Handle document uploads if present
+    if (await hasDocumentUploads()) {
+      console.log("📝 Processing document uploads...");
+      await handleDocumentUploads();
+      processedSomething = true;
+    }
+    
+    // Accept legal disclaimers if present
+    if (await hasLegalDisclaimer()) {
+      console.log("📝 Processing legal disclaimers...");
+      await acceptLegalDisclaimer();
+      processedSomething = true;
+    }
+    
+    console.log(`📊 Page processing complete - processed: ${processedSomething}`);
+    return processedSomething;
+    
+  } catch (error) {
+    console.error("❌ Error processing page:", error);
+    return false;
+  }
+}
+
+/**
+ * Try to proceed to the next page by clicking Continue/Submit buttons
+ */
+async function proceedToNextPage() {
+  console.log("🔍 Looking for Continue/Submit buttons...");
+  
+  // Look for Continue buttons first
+  const continueButton = await findContinueButton();
+  if (continueButton) {
+    console.log("🖱️ Clicking Continue button...");
+    continueButton.click();
+    await new Promise(r => setTimeout(r, 1000));
+    return true;
+  }
+  
+  // Look for Submit buttons
+  const submitButton = await findSubmitButton();
+  if (submitButton) {
+    console.log("🖱️ Clicking Submit button...");
+    submitButton.click();
+    await new Promise(r => setTimeout(r, 1000));
+    return true;
+  }
+  
+  // Try pressing Enter key as fallback
+  console.log("⌨️ Trying Enter key as fallback...");
+  document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', keyCode: 13 }));
+  await new Promise(r => setTimeout(r, 1000));
+  
+  return false;
+}
+
+/**
+ * Find Continue button with multiple strategies
+ */
+async function findContinueButton() {
+  const continueSelectors = [
+    'button[data-testid*="continue"]',
+    'button.mosaic-provider-module-apply-questions-6xgesl',
+    'button[type="submit"]',
+    '.ia-Questions button[type="button"]',
+    '.mosaic-provider-module-apply-questions button[type="button"]',
+    '[class*="apply-questions"] button',
+    'button[class*="6xgesl"]'
+  ];
+  
+  // Try CSS selectors first
+  for (const selector of continueSelectors) {
+    try {
+      const button = await waitForElement(selector, 1000);
+      if (button) return button;
+    } catch (e) {
+      // Continue to next selector
+    }
+  }
+  
+  // Try text-based search
+  await new Promise(r => setTimeout(r, 500));
+  const allButtons = document.querySelectorAll('button, input[type="submit"], input[type="button"]');
+  for (const btn of allButtons) {
+    const text = (btn.textContent || btn.value || '').toLowerCase().trim();
+    if (text.includes('continue') || text.includes('next') || text.includes('proceed')) {
+      return btn;
+    }
+  }
+  
+  return null;
+}
+
+/**
+ * Find Submit button with multiple strategies  
+ */
+async function findSubmitButton() {
+  const submitSelectors = [
+    'button[type="submit"]',
+    '.ia-BasePage-footer button',
+    '.ia-Review button', 
+    '[class*="footer"] button',
+    '[class*="submit"] button',
+    'button[class*="primary"]',
+    'main button',
+    'footer button'
+  ];
+  
+  // Try CSS selectors first
+  for (const selector of submitSelectors) {
+    try {
+      const button = await waitForElement(selector, 1000);
+      if (button) return button;
+    } catch (e) {
+      // Continue to next selector
+    }
+  }
+  
+  // Try text-based search
+  const allButtons = document.querySelectorAll('button, input[type="submit"], input[type="button"]');
+  for (const btn of allButtons) {
+    const text = (btn.textContent || btn.value || '').toLowerCase().trim();
+    if (text.includes('submit your application') || text.includes('submit application') ||
+        text.includes('submit') || text.includes('apply now') || text.includes('send application')) {
+      return btn;
+    }
+  }
+  
+  return null;
+}
+
+/**
+ * Check if current page is the success page
+ */
+async function isSuccessPage() {
+  const pageText = document.body.textContent.toLowerCase();
+  const successKeywords = [
+    'application submitted',
+    'thank you for applying',
+    'successfully applied', 
+    'application received',
+    'we have received your application'
+  ];
+  
+  const successSelectors = [
+    '.success',
+    '.confirmation',
+    '[data-testid*="success"]',
+    '[data-testid*="confirmation"]'
+  ];
+  
+  // Check text content
+  if (successKeywords.some(keyword => pageText.includes(keyword))) {
+    return true;
+  }
+  
+  // Check CSS selectors
+  if (successSelectors.some(sel => document.querySelector(sel))) {
+    return true;
+  }
+  
+  return false;
+}
+
+/**
+ * Final success check with timeout
+ */
+async function checkApplicationSuccess() {
+  console.log("🔍 Checking for application success...");
+  
+  let attempts = 0;
+  while (attempts < 15) {
+    if (await isSuccessPage()) {
+      console.log("🎉 Application submitted successfully!");
+      return true;
+    }
+    
+    await new Promise(r => setTimeout(r, 1000));
+    attempts++;
+    console.log(`🔄 Checking success... ${attempts}/15`);
+  }
+  
+  console.log("❌ No success confirmation found");
+  return false;
+}
+
+/**
+ * Helper functions to detect page content
+ */
+async function hasContactInfo() {
+  return !!(await waitForElement('#mosaic-contactInfoModule, [data-testid="profile-location-page"], input[name*="name"], input[name*="email"], input[name*="phone"]', 1000));
+}
+
+async function hasEmployerQuestions() {
+  return !!(await waitForElement('.ia-Questions-item, [id^="q_"], [data-testid*="input-q_"], h1[data-testid="questions-heading"]', 1000));
+}
+
+async function hasResumeSelection() {
+  return !!(await waitForElement('.ia-Resume, input[type="radio"][name*="resume"], [data-testid*="resume"]', 1000));
+}
+
+async function hasDocumentUploads() {
+  return !!(await waitForElement('input[type="file"], [data-testid*="upload"], .upload', 1000));
+}
+
+async function hasLegalDisclaimer() {
+  return !!(await waitForElement('input[type="checkbox"][name*="legal"], input[type="checkbox"][name*="terms"], input[type="checkbox"][name*="agree"]', 1000));
+}
+
+/**
+ * Simplified form filling functions for dynamic workflow
+ */
+async function fillContactInfo() {
+  // Fill basic contact fields
+  const nameInput = await waitForElement('input[name*="name"], input[placeholder*="name"]', 2000);
+  if (nameInput && !nameInput.value) {
+    await fillInputSafely(nameInput, 'John Smith', 'name');
+  }
+  
+  const emailInput = await waitForElement('input[name*="email"], input[type="email"]', 2000);
+  if (emailInput && !emailInput.value) {
+    await fillInputSafely(emailInput, 'john.smith@email.com', 'email');
+  }
+  
+  const phoneInput = await waitForElement('input[name*="phone"], input[type="tel"]', 2000);
+  if (phoneInput && !phoneInput.value) {
+    await fillInputSafely(phoneInput, '555-123-4567', 'phone');
+  }
+}
+
+async function selectResume() {
+  const resumeRadio = await waitForElement('input[type="radio"][name*="resume"]', 2000);
+  if (resumeRadio && !resumeRadio.checked) {
+    resumeRadio.checked = true;
+    resumeRadio.dispatchEvent(new Event('change', { bubbles: true }));
+  }
+}
+
+async function handleDocumentUploads() {
+  // Skip file uploads for now - would need actual file handling
+  console.log("📄 Skipping document uploads");
+}
+
+async function acceptLegalDisclaimer() {
+  const checkboxes = document.querySelectorAll('input[type="checkbox"][name*="legal"], input[type="checkbox"][name*="terms"], input[type="checkbox"][name*="agree"]');
+  for (const checkbox of checkboxes) {
+    if (!checkbox.checked) {
+      checkbox.checked = true;
+      checkbox.dispatchEvent(new Event('change', { bubbles: true }));
+    }
+  }
 }
