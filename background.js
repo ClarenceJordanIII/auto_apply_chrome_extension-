@@ -2,29 +2,91 @@
 
 let jobQueue = [];
 let failedJobs = [];
+let retryQueue = [];
 let currentJob = null;
 let processing = false;
 
 const JOB_TIMEOUT = 500000; // 90 seconds per job (more time for complex applications)
 const JOB_THROTTLE = 3000; // 3 seconds between jobs (prevent rate limiting)
+const MAX_RETRIES = 5; // Maximum retry attempts per job
 
 // Load job queue from storage on startup
-chrome.storage.local.get(['jobQueue', 'failedJobs'], (result) => {
+chrome.storage.local.get(['jobQueue', 'failedJobs', 'retryQueue'], (result) => {
   if (result.jobQueue) jobQueue = result.jobQueue;
   if (result.failedJobs) failedJobs = result.failedJobs;
+  if (result.retryQueue) retryQueue = result.retryQueue;
   logQueueStatus();
 });
 // TODO add this to an html  when done
 function saveQueueState() {
-  chrome.storage.local.set({ jobQueue, failedJobs });
+  chrome.storage.local.set({ jobQueue, failedJobs, retryQueue });
 }
 
 function clearQueueState() {
-  chrome.storage.local.remove(['jobQueue', 'failedJobs']);
+  chrome.storage.local.remove(['jobQueue', 'failedJobs', 'retryQueue']);
 }
 
 function logQueueStatus() {
-  console.log(`Queue: ${jobQueue.length} pending, ${failedJobs.length} failed`);
+  console.log(`Queue: ${jobQueue.length} pending, ${retryQueue.length} retrying, ${failedJobs.length} permanently failed`);
+  
+  // Enhanced failure statistics
+  if (failedJobs.length > 0) {
+    const failureStats = {};
+    failedJobs.forEach(job => {
+      const category = job.failureCategory || 'unknown';
+      failureStats[category] = (failureStats[category] || 0) + 1;
+    });
+    
+    console.log(`📊 Failure breakdown:`, failureStats);
+  }
+  
+  // Show retry statistics
+  if (retryQueue.length > 0) {
+    const retryStats = {};
+    retryQueue.forEach(job => {
+      const attempts = job.retryCount || 0;
+      const key = `${attempts} attempts`;
+      retryStats[key] = (retryStats[key] || 0) + 1;
+    });
+    
+    console.log(`🔄 Retry breakdown:`, retryStats);
+  }
+}
+
+/**
+ * Categorize failure types for better debugging and statistics
+ */
+function categorizeFailure(result) {
+  // System/Technical failures
+  if (result.includes('timeout') || result.includes('exception') || result.includes('communication')) {
+    return 'TECHNICAL';
+  }
+  
+  // Form interaction failures  
+  if (result.includes('forms_filled_no_confirmation')) {
+    return 'FORM_SUBMITTED_UNCLEAR';
+  }
+  
+  if (result.includes('no_forms_no_confirmation')) {
+    return 'NO_INTERACTION';
+  }
+  
+  // Navigation failures
+  if (result.includes('tab') || result.includes('button') || result.includes('workflow')) {
+    return 'NAVIGATION';
+  }
+  
+  // Validation failures
+  if (result.includes('validation')) {
+    return 'VALIDATION';
+  }
+  
+  // Success detection failures (forms filled but couldn't confirm submission)
+  if (result.includes('after_forms')) {
+    return 'SUCCESS_DETECTION';
+  }
+  
+  return 'OTHER';
 }
 
 // Listen for messages from content.js
@@ -38,8 +100,13 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   // Handle job queue from Indeed page
   if (message.action === "queueJobs" && message.jobs && Array.isArray(message.jobs)) {
     console.log("Received jobs to queue:", message.jobs.length);
-    // Add jobs to queue with pending status
-    jobQueue = jobQueue.concat(message.jobs.map(job => ({ ...job, status: "pending" })));
+    // Add jobs to queue with pending status and retry count
+    jobQueue = jobQueue.concat(message.jobs.map(job => ({ 
+      ...job, 
+      status: "pending",
+      retryCount: 0,
+      originalAttemptTime: Date.now()
+    })));
     sendResponse({ status: "queued", queueLength: jobQueue.length });
     logQueueStatus();
     saveQueueState(); // Save state after adding jobs
@@ -74,13 +141,94 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   sendResponse({ status: "error", message: "Unknown action" });
   return true;
 });
+/**
+ * Add job to retry queue if it hasn't exceeded max retries
+ */
+function addToRetryQueue(job, reason) {
+  job.retryCount = (job.retryCount || 0) + 1;
+  job.lastFailureReason = reason;
+  job.lastRetryTime = Date.now();
+  
+  if (job.retryCount < MAX_RETRIES) {
+    console.log(`🔄 Adding job to retry queue (attempt ${job.retryCount}/${MAX_RETRIES}): ${job.jobTitle}`);
+    retryQueue.push(job);
+    saveQueueState();
+    return true;
+  } else {
+    console.log(`❌ Job exceeded max retries (${MAX_RETRIES}): ${job.jobTitle}`);
+    job.failureCategory = categorizeFailure(reason);
+    failedJobs.push(job);
+    saveQueueState();
+    return false;
+  }
+}
+
 //  add retry logic for failed jobs 
 function processNextJob() {
+  // First, check if there are jobs in retry queue (prioritize retries)
+  if (retryQueue.length > 0 && jobQueue.length === 0) {
+    console.log(`🔄 Processing ${retryQueue.length} jobs from retry queue...`);
+    jobQueue = [...retryQueue];
+    retryQueue = [];
+    saveQueueState();
+  }
+  
   if (jobQueue.length === 0) {
     processing = false;
     console.log("All jobs processed.");
+    
+    if (retryQueue.length > 0) {
+      console.log(`🔄 ${retryQueue.length} jobs in retry queue will be processed next cycle.`);
+      // Process retry queue
+      setTimeout(() => {
+        processNextJob();
+      }, JOB_THROTTLE * 2); // Wait a bit longer before retries
+      return;
+    }
+    
     if (failedJobs.length > 0) {
-      console.log(`${failedJobs.length} jobs failed and will not be retried.`);
+      console.log(`${failedJobs.length} jobs permanently failed after ${MAX_RETRIES} attempts each.`);
+      
+      // Detailed failure analysis for accuracy improvement
+      console.log("\n📊 FINAL ACCURACY REPORT:");
+      console.log("─".repeat(50));
+      
+      // Get success count from storage instead of localStorage (which doesn't exist in service worker)
+      chrome.storage.local.get(['successfulJobs'], (result) => {
+        const successJobs = result.successfulJobs || [];
+        const totalJobs = successJobs.length + failedJobs.length;
+        const successRate = totalJobs > 0 ? (successJobs.length / totalJobs * 100).toFixed(1) : 0;
+        
+        console.log(`📈 Success Rate: ${successRate}% (${successJobs.length}/${totalJobs})`);
+        console.log(`✅ Successful Jobs: ${successJobs.length}`);
+        console.log(`❌ Failed Jobs: ${failedJobs.length}`);
+        
+        if (failedJobs.length > 0) {
+          console.log("\n🔍 FAILURE BREAKDOWN:");
+          
+          // Categorize failures for improvement insights
+          const failureCategories = {};
+          failedJobs.forEach(job => {
+            const category = job.failureCategory || 'unknown';
+            if (!failureCategories[category]) {
+              failureCategories[category] = [];
+            }
+            failureCategories[category].push(job.status);
+          });
+          
+          Object.entries(failureCategories).forEach(([category, failures]) => {
+            console.log(`\n📋 ${category.toUpperCase()}: ${failures.length} jobs`);
+            const uniqueReasons = [...new Set(failures)];
+            uniqueReasons.forEach(reason => {
+              const count = failures.filter(f => f === reason).length;
+              console.log(`   • ${reason}: ${count} occurrences`);
+            });
+          });
+        }
+        
+        console.log("\n" + "─".repeat(50));
+        console.log("📊 Report Complete");
+      });
     }
     logQueueStatus();
     clearQueueState(); // Clear storage when done
@@ -96,7 +244,12 @@ function processNextJob() {
     if (chrome.runtime.lastError) {
       console.error("Failed to create tab:", chrome.runtime.lastError.message);
       currentJob.status = "fail_tab_creation";
-      failedJobs.push(currentJob);
+      
+      const shouldRetry = addToRetryQueue(currentJob, "fail_tab_creation");
+      if (!shouldRetry) {
+        console.log("❌ Tab creation permanently failed for:", currentJob.jobTitle);
+      }
+      
       setTimeout(processNextJob, JOB_THROTTLE);
       return;
     }
@@ -111,7 +264,12 @@ function processNextJob() {
         console.log("Job timed out after 90 seconds:", currentJob);
         jobCompleted = true;
         currentJob.status = "fail_timeout";
-        failedJobs.push(currentJob);
+        
+        const shouldRetry = addToRetryQueue(currentJob, "fail_timeout");
+        if (!shouldRetry) {
+          console.log("❌ Job timeout permanently failed for:", currentJob.jobTitle);
+        }
+        
         logQueueStatus();
         
         // Safely close tab
@@ -136,11 +294,30 @@ function processNextJob() {
         clearTimeout(timeoutId);
         
         currentJob.status = msg.result;
-        if (msg.result === "pass") {
-          console.log("✅ Job succeeded:", currentJob.jobTitle);
+        
+        // Enhanced result categorization with retry logic
+        if (msg.result === "pass" || msg.result === "pass_no_forms_needed") {
+          console.log("✅ Job succeeded:", currentJob.jobTitle, "- Result:", msg.result);
+          
+          // Save successful job to storage
+          chrome.storage.local.get(['successfulJobs'], (result) => {
+            const successfulJobs = result.successfulJobs || [];
+            successfulJobs.push({
+              ...currentJob,
+              successTime: Date.now(),
+              finalResult: msg.result
+            });
+            chrome.storage.local.set({ successfulJobs });
+          });
         } else {
-          failedJobs.push(currentJob);
-          console.log("❌ Job failed:", currentJob.jobTitle, "- Reason:", msg.result);
+          // Try to retry the job first
+          const shouldRetry = addToRetryQueue(currentJob, msg.result);
+          
+          if (shouldRetry) {
+            console.log("🔄 Job added to retry queue:", currentJob.jobTitle, "- Reason:", msg.result, "- Attempt:", currentJob.retryCount);
+          } else {
+            console.log("❌ Job permanently failed:", currentJob.jobTitle, "- Final reason:", msg.result);
+          }
         }
         logQueueStatus();
         

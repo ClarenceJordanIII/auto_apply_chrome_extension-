@@ -1,0 +1,270 @@
+{
+  "personalInfo": {
+    "address": "123 Main Street",
+    "city": "Dallas",
+    "state": "TX",
+    "zip": "75201",
+    "phone": "(555) 123-4567",
+    "email": "john.doe.jobs@gmail.com",
+    "emergencyContact": "Jane Doe - (555) 987-6543"
+  },
+  "professionalInfo": {
+    "linkedin": "https://www.linkedin.com/in/johndoe",
+    "website": "https://johndoe-portfolio.com",
+    "github": "https://github.com/johndoe",
+    "referralSource": "Online job search",
+    "salary": "Competitive/Negotiable",
+    "previousEmployer": "ABC Company",
+    "supervisor": "John Smith"
+  },
+  "education": {
+    "school": "State University",
+    "major": "Business Administration",
+    "gpa": "3.5"
+  },
+  "textInputPatterns": [
+    {
+      "keywords": ["address", "street"],
+      "value": "123 Main Street"
+    },
+    {
+      "keywords": ["city"],
+      "value": "Dallas"
+    },
+    {
+      "keywords": ["state", "province"],
+      "value": "TX"
+    },
+    {
+      "keywords": ["zip", "postal"],
+      "value": "75201"
+    },
+    {
+      "keywords": ["phone", "mobile", "cell"],
+      "value": "(555) 123-4567"
+    },
+    {
+      "keywords": ["email"],
+      "value": "john.doe.jobs@gmail.com"
+    },
+    {
+      "keywords": ["emergency contact"],
+      "value": "Jane Doe - (555) 987-6543"
+    },
+    {
+      "keywords": ["linkedin"],
+      "value": "https://www.linkedin.com/in/johndoe"
+    },
+    {
+      "keywords": ["website", "portfolio", "blog"],
+      "value": "https://johndoe-portfolio.com"
+    },
+    {
+      "keywords": ["github"],
+      "value": "https://github.com/johndoe"
+    },
+    {
+      "keywords": ["referred", "referral", "how did you hear"],
+      "value": "Online job search"
+    },
+    {
+      "keywords": ["How many years"],
+      "value": "4"
+    },
+    {
+      "keywords": ["salary", "wage", "pay", "compensation"],
+      "value": "Competitive/Negotiable"
+    },
+    {
+      "keywords": ["previous employer", "last company", "current employer"],
+      "value": "ABC Company"
+    },
+    {
+      "keywords": ["supervisor", "manager", "boss"],
+      "value": "John Smith"
+    },
+    {
+      "keywords": ["school", "university", "college"],
+      "value": "State University"
+    },
+    {
+      "keywords": ["major", "degree field"],
+      "value": "Business Administration"
+    },
+    {
+      "keywords": ["gpa"],
+      "value": "3.5"
+    },
+    {
+      "keywords": ["certification", "license number"],
+      "value": "Valid - Details available upon request"
+    },
+    {
+      "keywords": ["software", "tools", "programs"],
+      "value": "Microsoft Office, Google Workspace"
+    },
+    {
+      "keywords": ["programming", "coding"],
+      "value": "JavaScript, Python, HTML/CSS"
+    },
+    {
+      "keywords": ["notice period", "availability date"],
+      "value": "2 weeks"
+    },
+    {
+      "keywords": ["start date"],
+      "value": "Immediately"
+    }
+  ],
+  "numberInputPatterns": [
+    {
+      "keywords": ["years", "experience", "technical", "leader", "lead"],
+      "value": "3",
+      "description": "Technical leadership experience"
+    },
+    {
+      "keywords": ["years", "experience", "ios", "swift"],
+      "value": "5",
+      "description": "iOS development experience"
+    },
+    {
+      "keywords": ["years", "experience", "android", "kotlin", "java"],
+      "value": "4",
+      "description": "Android development experience"
+    },
+    {
+      "keywords": ["years", "experience", "web", "javascript", "react", "angular"],
+      "value": "6",
+      "description": "Web development experience"
+    },
+    {
+      "keywords": ["years", "experience", "python"],
+      "value": "4",
+      "description": "Python experience"
+    },
+    {
+      "keywords": ["years", "experience", "java"],
+      "value": "5",
+      "description": "Java experience (not JavaScript)"
+    },
+    {
+      "keywords": ["years", "experience", "management", "manager", "managing"],
+      "value": "2",
+      "description": "Management experience"
+    },
+    {
+      "keywords": ["years", "experience", "sales", "selling"],
+      "value": "3",
+      "description": "Sales experience"
+    },
+    {
+      "keywords": ["years", "experience", "customer", "service", "support"],
+      "value": "4",
+      "description": "Customer service experience"
+    },
+    {
+      "keywords": ["years", "experience"],
+      "value": "3",
+      "description": "Generic experience"
+    },
+    {
+      "keywords": ["age", "old"],
+      "value": "25",
+      "description": "Age"
+    },
+    {
+      "keywords": ["salary", "wage", "pay"],
+      "value": "65",
+      "description": "Salary expectation in thousands"
+    },
+    {
+      "keywords": ["hours", "week"],
+      "value": "40",
+      "description": "Hours per week"
+    }
+  ],
+  "textareaPatterns": [
+    {
+      "keywords": ["desired pay", "salary", "wage", "compensation"],
+      "value": "Competitive salary based on experience and market standards"
+    },
+    {
+      "keywords": ["cover letter"],
+      "value": "I am excited to apply for this position and believe my skills and experience make me a great fit for your team. I am eager to contribute to your organization and grow professionally."
+    },
+    {
+      "keywords": ["visa", "sponsorship", "h-1b", "work authorization"],
+      "value": "No, I do not require sponsorship for employment visa status. I am authorized to work in the United States."
+    },
+    {
+      "keywords": ["why do you want", "why are you interested"],
+      "value": "This role aligns perfectly with my career goals and offers the opportunity to utilize my skills while contributing to a dynamic team."
+    },
+    {
+      "keywords": ["reason for applying", "reason for", "applying"],
+      "value": "I am drawn to this position because it offers an excellent opportunity to utilize my skills and experience while contributing to a growing organization. The role aligns with my career goals and I am excited about the potential to make a meaningful impact on the team."
+    },
+    {
+      "keywords": ["experience", "background", "relevant"],
+      "value": "I have relevant experience in this field with a proven track record of success. I am committed to delivering quality results and continuous learning."
+    },
+    {
+      "keywords": ["strength", "skills"],
+      "value": "My key strengths include strong communication skills, problem-solving abilities, attention to detail, and the ability to work effectively both independently and as part of a team."
+    },
+    {
+      "keywords": ["goal", "objective", "career"],
+      "value": "My goal is to contribute to a successful team while developing my professional skills and advancing my career in this field."
+    },
+    {
+      "keywords": ["challenge", "difficult situation"],
+      "value": "I approach challenges with a positive attitude and systematic problem-solving approach. I believe in learning from every experience and adapting to find effective solutions."
+    },
+    {
+      "keywords": ["additional", "anything else", "comments"],
+      "value": "I am enthusiastic about this opportunity and would welcome the chance to discuss how my background and skills can contribute to your team. Thank you for your consideration."
+    },
+    {
+      "keywords": ["availability", "schedule"],
+      "value": "I am flexible with scheduling and available to work various shifts as needed. I can start immediately or with appropriate notice period."
+    },
+    {
+      "keywords": ["education", "qualifications"],
+      "value": "I have completed relevant education and training that has prepared me for this role. I am committed to continuous learning and professional development."
+    }
+  ],
+  "radioPatterns": [
+    {
+      "keywords": ["visa", "sponsorship", "h-1b", "opt", "work authorization"],
+      "preferredValue": "no",
+      "description": "Usually answer 'No' for sponsorship questions"
+    }
+  ],
+  "selectPatterns": [
+    {
+      "keywords": ["country"],
+      "preferredValue": "united states",
+      "fallbackValue": "us"
+    },
+    {
+      "keywords": ["state", "province"],
+      "preferredValue": "texas",
+      "fallbackValue": "tx"
+    },
+    {
+      "keywords": ["experience", "level"],
+      "preferredValue": "experienced",
+      "fallbackValue": "mid-level"
+    }
+  ],
+  "defaultValues": {
+    "textInput": "Available upon request",
+    "numberInput": "1",
+    "textarea": "I am interested in this position and believe I would be a valuable addition to your team."
+  },
+  "learnedData": {
+    "patterns": [],
+    "lastUpdated": null,
+    "version": "1.0"
+  }
+}

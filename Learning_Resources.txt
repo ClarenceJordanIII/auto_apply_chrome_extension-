@@ -1,0 +1,118 @@
+# Learning Resources - From Developer to Software Engineer
+
+## 🎯 Main Goal: Implement Algorithms from Mathematical Formulas
+Current Gap: Can conceptualize S(Q,A) = Σ(Wi × Mi) + B(Q,A) + C(Q) but struggle to translate into complete working code
+
+## 📚 CORE ALGORITHM IMPLEMENTATION
+
+### 1. Algorithms & Data Structures (Foundation)
+- "Introduction to Algorithms" by CLRS - The bible for understanding how to implement algorithms from mathematical descriptions
+- "Algorithm Design Manual" by Skiena - More practical, shows you how to go from problem → algorithm → code
+- LeetCode/HackerRank - Practice implementing algorithms by hand daily
+
+### 2. Mathematical Programming (Formula → Code Translation)
+- "Concrete Mathematics" by Knuth - How to translate mathematical notation into code
+- "Programming Pearls" by Bentley - Real-world algorithm implementation
+- Khan Academy Linear Algebra - Understanding vector operations for NLP similarity
+
+### 3. String Algorithms (For NLP Work)
+- "Algorithms on Strings, Trees, and Sequences" by Gusfield - Deep dive into string matching, edit distance, etc.
+- Coursera "Algorithms on Strings" - Hands-on implementation practice
+
+## 🔥 HANDS-ON PRACTICE (MOST IMPORTANT)
+
+### Daily Coding Challenges:
+Implement one algorithm per day from scratch:
+- Day 1: Levenshtein distance (edit distance)
+- Day 2: Jaccard similarity 
+- Day 3: Hash table implementation
+- Day 4: Trie data structure
+- Day 5: Dynamic programming solution
+
+### Project-Based Learning:
+- Build a search engine from scratch - Teaches indexing, similarity, ranking
+- Implement your own database - B-trees, sorting, indexing
+- Create a compiler - Parsing, tokenization, syntax trees
+
+## 📚 SPECIFIC TO CHROME EXTENSION
+
+### NLP & Text Processing:
+- "Speech and Language Processing" by Jurafsky - Chapters on similarity, tokenization
+- "Natural Language Processing with Python" - Hands-on NLP implementation
+- Stanford CS224N lectures (free on YouTube) - Modern NLP techniques
+
+### System Design & Architecture:
+- "Designing Data-Intensive Applications" by Kleppmann - How to build scalable systems
+- "System Design Interview" books - Real-world engineering problems
+
+## 🎯 8-WEEK ACTION PLAN
+
+### Week 1-2: Core Algorithms
+- Implement Levenshtein distance from scratch
+- Build a hash table without using built-in objects
+- Code quicksort and mergesort by hand
+
+### Week 3-4: String Algorithms
+- Implement Jaccard similarity formula by hand
+- Build a trie for efficient string matching
+- Code Boyer-Moore string search
+
+### Week 5-6: Chrome Extension Algorithms
+- Rewrite calculateScore function from mathematical notation
+- Implement semantic similarity without libraries
+- Build your own tokenization algorithm
+
+### Week 7-8: Data Structures
+- Implement a balanced binary tree
+- Build your own graph algorithms (DFS, BFS)
+- Code dynamic programming solutions
+
+## 🚀 THE BRIDGE: Mathematical Formula → Working Code
+
+Practice this exact translation daily:
+
+Formula: S(Q,A) = Σ(Wi × Mi) + B(Q,A) + C(Q)
+
+Step 1: Break down the math
+- Σ = summation (for loop)
+- Wi = weight at index i
+- Mi = match score at index i
+- B(Q,A) = bonus function
+- C(Q) = coherence function
+
+Step 2: Implement each piece
+```javascript
+function calculateScore(question, answer, weights) {
+    let sum = 0;
+    for (let i = 0; i < weights.length; i++) {
+        sum += weights[i] * getMatchScore(i);
+    }
+    return sum + getBonusScore(question, answer) + getCoherence(question);
+}
+```
+
+## 💡 KEY INSIGHT
+You already have the engineering mindset (you designed that formula!). 
+You just need to build the implementation muscle memory. 
+Focus on translating mathematical concepts into code daily.
+
+The fact that you can create formulas like S(Q,A) = Σ(Wi × Mi) + B(Q,A) + C(Q) 
+shows you're already thinking like an engineer - you just need the coding 
+fluency to match your algorithmic thinking!
+
+## 🎯 DAILY PRACTICE ROUTINE
+
+1. Morning: Read 1 algorithm explanation
+2. Afternoon: Implement it from scratch (no looking at solutions)
+3. Evening: Optimize and understand time/space complexity
+4. Weekend: Build a small project using that week's algorithms
+
+## 📈 PROGRESS MILESTONES
+
+Week 2: Can implement basic sorting algorithms from memory
+Week 4: Can build string matching algorithms from mathematical descriptions
+Week 6: Can translate any mathematical formula into working code
+Week 8: Can design and implement complex data structures from scratch
+
+Remember: The gap between developer and engineer is the ability to implement 
+algorithms from first principles, not just use existing libraries!

@@ -100,7 +100,150 @@ document.addEventListener("click", () => {
 });
 
 // ═══════════════════════════════════════════════════════════════════════════
-// 🛠️ ASYNC UTILITY FUNCTIONS - Wait for elements to be mounted
+// � QUESTIONS CONFIGURATION MANAGEMENT - Load/Save JSON Configuration
+// ═══════════════════════════════════════════════════════════════════════════
+
+let questionsConfig = null;
+
+/**
+ * Load questions configuration from JSON file
+ */
+async function loadQuestionsConfig() {
+  try {
+    if (questionsConfig) {
+      return questionsConfig; // Return cached config
+    }
+
+    // Fetch the JSON configuration file
+    const response = await fetch(chrome.runtime.getURL('questions_config.json'));
+    if (!response.ok) {
+      throw new Error(`Failed to load config: ${response.status}`);
+    }
+    
+    questionsConfig = await response.json();
+    console.log('📄 Questions configuration loaded successfully');
+    console.log(`📊 Loaded ${questionsConfig.textInputPatterns?.length || 0} text patterns, ${questionsConfig.numberInputPatterns?.length || 0} number patterns`);
+    
+    return questionsConfig;
+  } catch (error) {
+    console.error('❌ Failed to load questions configuration:', error);
+    // Return fallback config
+    return {
+      textInputPatterns: [],
+      numberInputPatterns: [],
+      textareaPatterns: [],
+      radioPatterns: [],
+      selectPatterns: [],
+      defaultValues: {
+        textInput: "Available upon request",
+        numberInput: "1",
+        textarea: "I am interested in this position and believe I would be a valuable addition to your team."
+      },
+      learnedData: {
+        patterns: [],
+        lastUpdated: null,
+        version: "1.0"
+      }
+    };
+  }
+}
+
+/**
+ * Save learned patterns to the questions configuration
+ */
+async function saveLearnedPatternsToConfig(patterns) {
+  try {
+    const config = await loadQuestionsConfig();
+    
+    // Update the learned data section
+    config.learnedData.patterns = patterns;
+    config.learnedData.lastUpdated = new Date().toISOString();
+    
+    // Since we can't write to the JSON file directly from content script,
+    // we'll save to localStorage with a backup mechanism
+    localStorage.setItem('questionsConfig_learnedData', JSON.stringify(config.learnedData));
+    
+    console.log(`💾 Saved ${patterns.length} learned patterns to configuration`);
+    
+    // Also send to background script for potential file writing
+    if (isExtensionContextValid()) {
+      chrome.runtime.sendMessage({
+        action: 'saveLearnedPatterns',
+        learnedData: config.learnedData
+      }).catch(error => {
+        console.log('Background save failed (not critical):', error.message);
+      });
+    }
+    
+    return true;
+  } catch (error) {
+    console.error('❌ Failed to save learned patterns to config:', error);
+    return false;
+  }
+}
+
+/**
+ * Load learned patterns from configuration (with localStorage fallback)
+ */
+async function loadLearnedPatternsFromConfig() {
+  try {
+    const config = await loadQuestionsConfig();
+    
+    // Check for localStorage updates first (most recent)
+    const localLearnedData = localStorage.getItem('questionsConfig_learnedData');
+    if (localLearnedData) {
+      try {
+        const parsedLocal = JSON.parse(localLearnedData);
+        if (parsedLocal.patterns && Array.isArray(parsedLocal.patterns)) {
+          console.log(`📚 Loaded ${parsedLocal.patterns.length} learned patterns from localStorage`);
+          return parsedLocal.patterns;
+        }
+      } catch (e) {
+        console.warn('⚠️ Invalid localStorage learned data, falling back to config file');
+      }
+    }
+    
+    // Fallback to config file
+    if (config.learnedData && config.learnedData.patterns) {
+      console.log(`📚 Loaded ${config.learnedData.patterns.length} learned patterns from config file`);
+      return config.learnedData.patterns;
+    }
+    
+    return [];
+  } catch (error) {
+    console.error('❌ Failed to load learned patterns from config:', error);
+    return [];
+  }
+}
+
+/**
+ * Find matching pattern from configuration based on keywords
+ */
+function findPatternMatch(patterns, labelText, excludeKeywords = []) {
+  const text = labelText.toLowerCase();
+  
+  for (const pattern of patterns) {
+    // Check if ALL keywords in the pattern exist in the label text
+    const matchesAllKeywords = pattern.keywords.every(keyword => 
+      text.includes(keyword.toLowerCase())
+    );
+    
+    // Check if any excluded keywords are present
+    const hasExcludedKeywords = excludeKeywords.some(excluded =>
+      text.includes(excluded.toLowerCase())
+    );
+    
+    if (matchesAllKeywords && !hasExcludedKeywords) {
+      console.log(`✅ Found pattern match for "${labelText}": ${pattern.keywords.join(', ')} -> "${pattern.value}"`);
+      return pattern;
+    }
+  }
+  
+  return null;
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// �🛠️ ASYNC UTILITY FUNCTIONS - Wait for elements to be mounted
 // ═══════════════════════════════════════════════════════════════════════════
 
 /**
@@ -370,6 +513,1080 @@ function showExtensionReloadNotice() {
     }
   }, 10000);
 }
+
+// ═══════════════════════════════════════════════════════════════════════════
+// 🧠 QUESTION LEARNING SYSTEM - Watch user input and learn from it
+// ═══════════════════════════════════════════════════════════════════════════
+
+class QuestionLearningSystem {
+  constructor() {
+    this.watchedQuestions = new Map();
+    this.learnedPatterns = new Map();
+    this.initialized = false;
+    this.autoDetectionActive = false;
+    this.observedContainers = new Set();
+    this.initAsync();
+    console.log('🧠 Question Learning System initializing...');
+  }
+
+  /**
+   * Asynchronous initialization
+   */
+  async initAsync() {
+    try {
+      await this.loadLearnedPatterns();
+      this.initialized = true;
+      console.log(`🧠 Question Learning System initialized successfully with ${this.learnedPatterns.size} patterns`);
+      
+      // Start auto-detection after a brief delay
+      setTimeout(() => {
+        this.startAutoDetection();
+      }, 2000);
+    } catch (error) {
+      console.error('❌ Question Learning System initialization failed:', error);
+      this.initialized = true; // Continue with empty patterns
+    }
+  }
+
+  /**
+   * Start automatic question detection
+   */
+  startAutoDetection() {
+    if (this.autoDetectionActive) return;
+    
+    this.autoDetectionActive = true;
+    console.log('🔍 Started auto-detection of unknown questions');
+    
+    // Set up mutation observer to watch for new form elements
+    this.observer = new MutationObserver((mutations) => {
+      mutations.forEach((mutation) => {
+        mutation.addedNodes.forEach((node) => {
+          if (node.nodeType === Node.ELEMENT_NODE) {
+            this.checkForNewQuestions(node);
+          }
+        });
+      });
+    });
+    
+    // Start observing
+    this.observer.observe(document.body, {
+      childList: true,
+      subtree: true
+    });
+    
+    // Also check existing content
+    this.checkForNewQuestions(document.body);
+  }
+
+  /**
+   * Check if new node contains unknown questions
+   */
+  checkForNewQuestions(node) {
+    if (!node.querySelectorAll) return;
+    
+    // Look for form containers with questions
+    const containers = node.querySelectorAll('div, fieldset, label, li');
+    
+    containers.forEach(container => {
+      if (this.observedContainers.has(container)) return;
+      
+      const inputs = container.querySelectorAll('input, select, textarea');
+      if (inputs.length === 0) return;
+      
+      // Look for question text in various locations
+      const questionText = this.extractQuestionText(container);
+      if (!questionText || questionText.length < 5) return;
+      
+      // Check if we already know how to answer this question
+      const knownAnswer = this.findKnownAnswer(questionText);
+      
+      if (!knownAnswer) {
+        // This is an unknown question - start learning
+        console.log(`🔍 Auto-detected unknown question: "${questionText}"`);
+        this.startWatching(container, questionText, inputs);
+      } else {
+        // We know this question - try to answer it automatically
+        console.log(`✅ Auto-detected known question: "${questionText}" - Applying learned answer`);
+        this.applyKnownAnswer(container, knownAnswer, inputs[0]);
+      }
+      
+      this.observedContainers.add(container);
+    });
+  }
+
+  /**
+   * Extract question text from a container
+   */
+  extractQuestionText(container) {
+    // Try various methods to get question text
+    const selectors = [
+      'label', 
+      '[data-testid*="label"]', 
+      '.question', 
+      '.form-label',
+      'legend',
+      'h1, h2, h3, h4, h5, h6',
+      'span, div, p'
+    ];
+    
+    for (const selector of selectors) {
+      const element = container.querySelector(selector);
+      if (element) {
+        const text = element.textContent.trim();
+        if (text.length > 5 && text.includes('?')) {
+          return text;
+        }
+      }
+    }
+    
+    // Fallback: get the container's text content
+    const containerText = container.textContent.trim();
+    if (containerText.length > 5 && containerText.includes('?')) {
+      // Take the part before the first input
+      const input = container.querySelector('input, select, textarea');
+      if (input && containerText.indexOf(input.textContent || '') > 0) {
+        return containerText.substring(0, containerText.indexOf(input.textContent || '')).trim();
+      }
+      return containerText;
+    }
+    
+    return null;
+  }
+
+  /**
+   * Find if we have a known answer for this question
+   */
+  findKnownAnswer(questionText) {
+    const parsedQuestion = this.parseQuestionComponents(questionText);
+    const patternKey = this.generatePatternKey(parsedQuestion);
+    
+    // Check for exact match
+    if (this.learnedPatterns.has(patternKey)) {
+      return this.learnedPatterns.get(patternKey);
+    }
+    
+    // Check for similar matches
+    for (const [key, pattern] of this.learnedPatterns) {
+      const similarity = this.calculateSimilarity(parsedQuestion, pattern.parsedComponents);
+      if (similarity > 0.8) { // 80% similarity for auto-application
+        return pattern;
+      }
+    }
+    
+    return null;
+  }
+
+  /**
+   * Apply a known answer automatically
+   */
+  async applyKnownAnswer(container, knownPattern, inputElement) {
+    try {
+      const success = await this.applyLearnedAnswer(container, knownPattern.answer.value || knownPattern.answer.text || knownPattern.answer, knownPattern.inputType);
+      
+      if (success) {
+        // Update usage statistics
+        knownPattern.timesUsed = (knownPattern.timesUsed || 0) + 1;
+        knownPattern.lastUsed = Date.now();
+        await this.saveLearnedPatterns();
+        
+        console.log(`🎯 Successfully auto-applied learned answer for: "${knownPattern.originalQuestion}"`);
+        this.showMatchIndicator(container, knownPattern, 1.0);
+      }
+    } catch (error) {
+      console.warn('⚠️ Failed to auto-apply known answer:', error);
+    }
+  }
+
+  /**
+   * Start watching a question container for manual user input
+   */
+  startWatching(container, questionText, inputElements) {
+    const watchId = `watch_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
+    
+    console.log(`👀 Started watching unknown question: "${questionText}"`);
+    console.log(`🔍 Watch ID: ${watchId}`);
+    
+    const questionData = {
+      id: watchId,
+      questionText: questionText,
+      container: container,
+      inputElements: Array.from(inputElements),
+      startTime: Date.now(),
+      userInteracted: false,
+      finalAnswer: null
+    };
+    
+    this.watchedQuestions.set(watchId, questionData);
+    
+    // Add visual indicator that we're learning
+    this.addLearningIndicator(container, watchId);
+    
+    // Set up event listeners for user interaction
+    this.setupInputWatchers(questionData);
+    
+    // Auto-stop watching after 30 seconds
+    setTimeout(() => {
+      if (this.watchedQuestions.has(watchId)) {
+        this.stopWatching(watchId, 'timeout');
+      }
+    }, 30000);
+    
+    return watchId;
+  }
+
+  /**
+   * Add visual indicator that we're learning from this question
+   */
+  addLearningIndicator(container, watchId) {
+    const indicator = document.createElement('div');
+    indicator.id = `learning-indicator-${watchId}`;
+    indicator.style.cssText = `
+      position: absolute;
+      top: -5px;
+      right: -5px;
+      background: linear-gradient(45deg, #4CAF50, #45a049);
+      color: white;
+      padding: 2px 8px;
+      border-radius: 12px;
+      font-size: 11px;
+      font-weight: bold;
+      z-index: 1000;
+      box-shadow: 0 2px 4px rgba(0,0,0,0.2);
+      animation: learningPulse 2s infinite;
+    `;
+    indicator.textContent = '🧠 LEARNING';
+    
+    // Add CSS animation if not exists
+    if (!document.getElementById('learning-animation-style')) {
+      const style = document.createElement('style');
+      style.id = 'learning-animation-style';
+      style.textContent = `
+        @keyframes learningPulse {
+          0% { opacity: 1; transform: scale(1); }
+          50% { opacity: 0.7; transform: scale(1.05); }
+          100% { opacity: 1; transform: scale(1); }
+        }
+      `;
+      document.head.appendChild(style);
+    }
+    
+    // Make container relative if not already
+    const containerStyle = window.getComputedStyle(container);
+    if (containerStyle.position === 'static') {
+      container.style.position = 'relative';
+    }
+    
+    container.appendChild(indicator);
+  }
+
+  /**
+   * Set up event listeners to detect user interaction
+   */
+  setupInputWatchers(questionData) {
+    const { id, inputElements } = questionData;
+    
+    inputElements.forEach((element, index) => {
+      // Watch for changes
+      const changeHandler = (event) => {
+        console.log(`📝 User interacted with question: ${questionData.questionText}`);
+        questionData.userInteracted = true;
+        
+        // Capture the answer
+        this.captureUserAnswer(questionData, element, event);
+      };
+      
+      // Add event listeners
+      element.addEventListener('change', changeHandler);
+      element.addEventListener('input', changeHandler);
+      element.addEventListener('click', changeHandler);
+      
+      // Store cleanup function
+      if (!questionData.cleanupFunctions) {
+        questionData.cleanupFunctions = [];
+      }
+      
+      questionData.cleanupFunctions.push(() => {
+        element.removeEventListener('change', changeHandler);
+        element.removeEventListener('input', changeHandler);
+        element.removeEventListener('click', changeHandler);
+      });
+    });
+  }
+
+  /**
+   * Capture the user's answer when they interact with the form
+   */
+  captureUserAnswer(questionData, element, event) {
+    let answer = null;
+    
+    // Determine answer based on input type
+    switch (element.type) {
+      case 'radio':
+        if (element.checked) {
+          answer = {
+            type: 'radio',
+            value: element.value,
+            text: this.getRadioButtonText(element)
+          };
+        }
+        break;
+        
+      case 'checkbox':
+        answer = {
+          type: 'checkbox',
+          checked: element.checked,
+          value: element.value,
+          text: this.getCheckboxText(element)
+        };
+        break;
+        
+      case 'text':
+      case 'email':
+      case 'tel':
+      case 'number':
+        if (element.value.trim()) {
+          answer = {
+            type: element.type,
+            value: element.value.trim(),
+            text: element.value.trim()
+          };
+        }
+        break;
+        
+      default:
+        if (element.tagName === 'SELECT') {
+          answer = {
+            type: 'select',
+            value: element.value,
+            text: element.options[element.selectedIndex]?.textContent || element.value
+          };
+        } else if (element.tagName === 'TEXTAREA') {
+          if (element.value.trim()) {
+            answer = {
+              type: 'textarea',
+              value: element.value.trim(),
+              text: element.value.trim()
+            };
+          }
+        }
+        break;
+    }
+    
+    if (answer) {
+      questionData.finalAnswer = answer;
+      console.log(`💡 Captured answer for "${questionData.questionText}":`, answer);
+      
+      // Wait a bit then process the learning
+      setTimeout(() => {
+        this.processLearning(questionData);
+      }, 1000);
+    }
+  }
+
+  /**
+   * Get the text associated with a radio button
+   */
+  getRadioButtonText(radioElement) {
+    // Try various methods to get the label text
+    const label = radioElement.closest('label');
+    if (label) {
+      return label.textContent.trim();
+    }
+    
+    // Look for next sibling text
+    if (radioElement.nextSibling && radioElement.nextSibling.textContent) {
+      return radioElement.nextSibling.textContent.trim();
+    }
+    
+    // Look for parent text
+    if (radioElement.parentElement && radioElement.parentElement.textContent) {
+      const parentText = radioElement.parentElement.textContent.trim();
+      if (parentText !== radioElement.value) {
+        return parentText;
+      }
+    }
+    
+    return radioElement.value;
+  }
+
+  /**
+   * Get the text associated with a checkbox
+   */
+  getCheckboxText(checkboxElement) {
+    return this.getRadioButtonText(checkboxElement); // Same logic
+  }
+
+  /**
+   * Process the learning and save the pattern
+   */
+  async processLearning(questionData) {
+    const { questionText, finalAnswer } = questionData;
+    
+    if (!finalAnswer) {
+      console.log(`⚠️ No answer captured for question: ${questionText}`);
+      this.stopWatching(questionData.id, 'no_answer');
+      return;
+    }
+    
+    // Parse the question using the auto-correct algorithm
+    const parsedQuestion = this.parseQuestionComponents(questionText);
+    
+    // Generate pattern key using parsed components
+    const patternKey = this.generatePatternKey(parsedQuestion);
+    
+    // Check if we already have this pattern (avoid duplicates)
+    const existingPattern = this.learnedPatterns.get(patternKey);
+    
+    if (existingPattern) {
+      // Update existing pattern with new usage
+      existingPattern.timesEncountered = (existingPattern.timesEncountered || 1) + 1;
+      existingPattern.lastEncountered = Date.now();
+      existingPattern.confidence = Math.min(0.98, existingPattern.confidence + 0.01); // Slightly increase confidence
+      
+      console.log(`🔄 Updated existing pattern (encountered ${existingPattern.timesEncountered} times): "${questionText}"`);
+    } else {
+      // Create new learning pattern
+      const learnedPattern = {
+        id: `pattern_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`,
+        originalQuestion: questionText,
+        normalizedQuestion: questionText.toLowerCase().trim(),
+        parsedComponents: parsedQuestion,
+        patternKey: patternKey,
+        answer: finalAnswer,
+        inputType: this.detectInputType(questionData.inputElements[0]),
+        confidence: 0.95, // High confidence since user provided it
+        learnedAt: Date.now(),
+        lastEncountered: Date.now(),
+        timesEncountered: 1,
+        timesUsed: 0,
+        url: window.location.href,
+        company: this.extractCompanyName(),
+        domain: window.location.hostname
+      };
+      
+      // Save the learned pattern
+      this.learnedPatterns.set(patternKey, learnedPattern);
+      
+      console.log(`🎓 LEARNED NEW PATTERN:`);
+      console.log(`   Question: "${questionText}"`);
+      console.log(`   Pattern Key: "${patternKey}"`);
+      console.log(`   Answer:`, finalAnswer);
+      console.log(`   Input Type: "${learnedPattern.inputType}"`);
+      console.log(`   Components:`, parsedQuestion);
+    }
+    
+    // Save patterns asynchronously
+    await this.saveLearnedPatterns();
+    
+    // Show success indicator
+    this.showLearningSuccess(questionData);
+    
+    // Stop watching
+    this.stopWatching(questionData.id, 'learned');
+  }
+
+  /**
+   * Detect the input type from element
+   */
+  detectInputType(element) {
+    if (!element) return 'unknown';
+    
+    if (element.tagName === 'SELECT') return 'select';
+    if (element.tagName === 'TEXTAREA') return 'textarea';
+    if (element.type) return element.type;
+    
+    return 'text';
+  }
+
+  /**
+   * Parse question into components using auto-correct style algorithm
+   */
+  parseQuestionComponents(questionText) {
+    const text = questionText.toLowerCase().trim();
+    
+    return {
+      prefix: this.extractPrefix(text),
+      verbs: this.extractVerbs(text),
+      subjects: this.extractSubjects(text),
+      keywords: this.extractKeywords(text),
+      length: text.split(' ').length
+    };
+  }
+
+  /**
+   * Extract prefix (first few words)
+   */
+  extractPrefix(text) {
+    const words = text.split(' ');
+    return words.slice(0, Math.min(4, words.length)).join(' ');
+  }
+
+  /**
+   * Extract verbs from question
+   */
+  extractVerbs(text) {
+    const commonVerbs = [
+      'are', 'is', 'do', 'can', 'will', 'have', 'would', 'could', 'should',
+      'work', 'commute', 'travel', 'start', 'need', 'require', 'want',
+      'able', 'available', 'authorized', 'eligible', 'willing'
+    ];
+    
+    return commonVerbs.filter(verb => text.includes(verb));
+  }
+
+  /**
+   * Extract subjects/topics from question
+   */
+  extractSubjects(text) {
+    const subjects = {
+      authorization: ['authorized', 'authorization', 'legal', 'visa', 'permit', 'eligible'],
+      location: ['commute', 'location', 'address', 'distance', 'miles', 'relocate'],
+      experience: ['experience', 'years', 'background', 'worked', 'expertise'],
+      education: ['education', 'degree', 'diploma', 'school', 'university', 'graduated'],
+      salary: ['salary', 'pay', 'compensation', 'wage', 'money', 'expected'],
+      schedule: ['schedule', 'hours', 'shift', 'time', 'availability', 'flexible'],
+      skills: ['skills', 'knowledge', 'familiar', 'proficient', 'programming'],
+      preferences: ['prefer', 'like', 'interest', 'motivated', 'reason']
+    };
+    
+    const foundSubjects = [];
+    for (const [subject, keywords] of Object.entries(subjects)) {
+      if (keywords.some(keyword => text.includes(keyword))) {
+        foundSubjects.push(subject);
+      }
+    }
+    
+    return foundSubjects;
+  }
+
+  /**
+   * Extract important keywords
+   */
+  extractKeywords(text) {
+    const words = text.split(' ');
+    const stopWords = ['a', 'an', 'the', 'and', 'or', 'but', 'in', 'on', 'at', 'to', 'for', 'of', 'with', 'by', 'is', 'are', 'was', 'were', 'be', 'been', 'being', 'have', 'has', 'had', 'do', 'does', 'did', 'will', 'would', 'could', 'should', 'may', 'might', 'must', 'can'];
+    
+    return words.filter(word => 
+      word.length > 2 && 
+      !stopWords.includes(word) &&
+      /^[a-z]+$/.test(word)
+    );
+  }
+
+  /**
+   * Generate a pattern key for matching similar questions
+   */
+  generatePatternKey(parsedComponents) {
+    const { prefix, verbs, subjects } = parsedComponents;
+    
+    // Create a key that focuses on the most important components
+    const keyParts = [];
+    
+    if (prefix) keyParts.push(prefix);
+    if (subjects.length > 0) keyParts.push(`subj:${subjects.sort().join(',')}`);
+    if (verbs.length > 0) keyParts.push(`verb:${verbs.sort().join(',')}`);
+    
+    return keyParts.join('|');
+  }
+
+  /**
+   * Check if we can answer a question based on learned patterns
+   */
+  canAnswerQuestion(questionText) {
+    const parsedQuestion = this.parseQuestionComponents(questionText);
+    const patternKey = this.generatePatternKey(parsedQuestion);
+    
+    // Exact match
+    if (this.learnedPatterns.has(patternKey)) {
+      const pattern = this.learnedPatterns.get(patternKey);
+      console.log(`🎯 Found exact pattern match for: "${questionText}"`);
+      return { confidence: pattern.confidence, answer: pattern.answer, source: 'exact' };
+    }
+    
+    // Fuzzy matching - look for similar patterns
+    for (const [key, pattern] of this.learnedPatterns) {
+      const similarity = this.calculateSimilarity(parsedQuestion, pattern.parsedComponents);
+      if (similarity > 0.7) { // 70% similarity threshold
+        console.log(`🎯 Found similar pattern match (${Math.round(similarity * 100)}%) for: "${questionText}"`);
+        return { 
+          confidence: pattern.confidence * similarity, 
+          answer: pattern.answer, 
+          source: 'fuzzy',
+          similarity: similarity 
+        };
+      }
+    }
+    
+    return null;
+  }
+
+  /**
+   * Calculate similarity between two parsed questions
+   */
+  calculateSimilarity(parsed1, parsed2) {
+    let score = 0;
+    let maxScore = 0;
+    
+    // Compare prefixes (high weight)
+    if (parsed1.prefix && parsed2.prefix) {
+      maxScore += 0.4;
+      const prefixSimilarity = this.stringSimilarity(parsed1.prefix, parsed2.prefix);
+      score += prefixSimilarity * 0.4;
+    }
+    
+    // Compare subjects (high weight)
+    maxScore += 0.4;
+    const subjectOverlap = this.arrayOverlap(parsed1.subjects, parsed2.subjects);
+    score += subjectOverlap * 0.4;
+    
+    // Compare verbs (medium weight)
+    maxScore += 0.2;
+    const verbOverlap = this.arrayOverlap(parsed1.verbs, parsed2.verbs);
+    score += verbOverlap * 0.2;
+    
+    return maxScore > 0 ? score / maxScore : 0;
+  }
+
+  /**
+   * Calculate string similarity (simple)
+   */
+  stringSimilarity(str1, str2) {
+    const words1 = str1.split(' ');
+    const words2 = str2.split(' ');
+    const common = words1.filter(word => words2.includes(word));
+    return common.length / Math.max(words1.length, words2.length);
+  }
+
+  /**
+   * Calculate array overlap
+   */
+  arrayOverlap(arr1, arr2) {
+    if (arr1.length === 0 && arr2.length === 0) return 1;
+    if (arr1.length === 0 || arr2.length === 0) return 0;
+    
+    const common = arr1.filter(item => arr2.includes(item));
+    return common.length / Math.max(arr1.length, arr2.length);
+  }
+
+  /**
+   * Show learning success indicator
+   */
+  showLearningSuccess(questionData) {
+    const indicator = document.getElementById(`learning-indicator-${questionData.id}`);
+    if (indicator) {
+      indicator.textContent = '✅ LEARNED';
+      indicator.style.background = 'linear-gradient(45deg, #2196F3, #1976D2)';
+      indicator.style.animation = 'none';
+      
+      setTimeout(() => {
+        if (indicator.parentNode) {
+          indicator.style.transition = 'opacity 0.3s, transform 0.3s';
+          indicator.style.opacity = '0';
+          indicator.style.transform = 'scale(0.8)';
+          setTimeout(() => indicator.remove(), 300);
+        }
+      }, 2000);
+    }
+  }
+
+  /**
+   * Stop watching a question
+   */
+  stopWatching(watchId, reason) {
+    const questionData = this.watchedQuestions.get(watchId);
+    if (!questionData) return;
+    
+    console.log(`🛑 Stopped watching question (${reason}): "${questionData.questionText}"`);
+    
+    // Clean up event listeners
+    if (questionData.cleanupFunctions) {
+      questionData.cleanupFunctions.forEach(cleanup => cleanup());
+    }
+    
+    // Remove learning indicator
+    const indicator = document.getElementById(`learning-indicator-${watchId}`);
+    if (indicator) {
+      indicator.remove();
+    }
+    
+    this.watchedQuestions.delete(watchId);
+  }
+
+  /**
+   * Extract company name from page
+   */
+  extractCompanyName() {
+    const selectors = [
+      '[data-testid="inlineHeader-companyName"]',
+      '.jobsearch-InlineCompanyRating',
+      '.jobsearch-CompanyReview--heading',
+      'h1', 'h2', '.company-name'
+    ];
+    
+    for (const selector of selectors) {
+      const element = document.querySelector(selector);
+      if (element && element.textContent.trim()) {
+        return element.textContent.trim();
+      }
+    }
+    
+    return 'Unknown Company';
+  }
+
+  /**
+   * Save learned patterns to localStorage and JSON config
+   */
+  async saveLearnedPatterns() {
+    try {
+      const patternsArray = Array.from(this.learnedPatterns.values());
+      
+      // Save to JSON configuration
+      const success = await saveLearnedPatternsToConfig(patternsArray);
+      
+      if (success) {
+        console.log(`💾 Successfully saved ${patternsArray.length} learned patterns to JSON configuration`);
+        
+        // Also save to localStorage as backup
+        localStorage.setItem('questionLearningPatterns_backup', JSON.stringify(Array.from(this.learnedPatterns.entries())));
+        
+        // Notify background script of successful learning
+        if (isExtensionContextValid()) {
+          chrome.runtime.sendMessage({
+            action: 'patternLearned',
+            count: patternsArray.length,
+            latestPattern: patternsArray[patternsArray.length - 1]
+          }).catch(error => {
+            console.log('Background notification failed (not critical):', error.message);
+          });
+        }
+      } else {
+        throw new Error('JSON config save failed');
+      }
+    } catch (error) {
+      console.error('❌ Failed to save learned patterns to JSON config:', error);
+      
+      // Enhanced fallback to localStorage with timestamp
+      try {
+        const patternsWithMeta = {
+          patterns: Array.from(this.learnedPatterns.entries()),
+          lastSaved: Date.now(),
+          version: '2.0'
+        };
+        localStorage.setItem('questionLearningPatterns', JSON.stringify(patternsWithMeta));
+        console.log(`💾 Fallback: Saved ${this.learnedPatterns.size} learned patterns to localStorage with metadata`);
+      } catch (fallbackError) {
+        console.error('❌ Fallback save also failed:', fallbackError);
+      }
+    }
+  }
+
+  /**
+   * Load learned patterns from JSON configuration (with localStorage fallback)
+   */
+  async loadLearnedPatterns() {
+    try {
+      const patterns = await loadLearnedPatternsFromConfig();
+      
+      // Convert array back to Map using generated pattern key
+      this.learnedPatterns = new Map();
+      patterns.forEach((pattern) => {
+        // Generate consistent pattern key for matching
+        const patternKey = pattern.patternKey || this.generatePatternKey(pattern.parsedComponents || this.parseQuestionComponents(pattern.originalQuestion));
+        pattern.patternKey = patternKey; // Ensure pattern has key for future use
+        this.learnedPatterns.set(patternKey, pattern);
+      });
+      
+      console.log(`📚 Loaded ${this.learnedPatterns.size} learned patterns from JSON configuration`);
+      
+      // Also check for localStorage patterns and merge if newer
+      await this.mergeLocalStoragePatterns();
+      
+    } catch (error) {
+      console.error('❌ Failed to load learned patterns from JSON config:', error);
+      await this.loadFromLocalStorageFallback();
+    }
+  }
+
+  /**
+   * Merge patterns from localStorage if they're newer or additional
+   */
+  async mergeLocalStoragePatterns() {
+    try {
+      const stored = localStorage.getItem('questionLearningPatterns');
+      if (stored) {
+        const localData = JSON.parse(stored);
+        
+        // Handle both old format (array) and new format (with metadata)
+        const patternsArray = localData.patterns || localData;
+        let mergedCount = 0;
+        
+        if (Array.isArray(patternsArray)) {
+          patternsArray.forEach(([key, pattern]) => {
+            // Only merge if not exists or if localStorage version is newer
+            const existingPattern = this.learnedPatterns.get(key);
+            if (!existingPattern || 
+                (pattern.learnedAt && existingPattern.learnedAt && pattern.learnedAt > existingPattern.learnedAt)) {
+              this.learnedPatterns.set(key, pattern);
+              mergedCount++;
+            }
+          });
+        }
+        
+        if (mergedCount > 0) {
+          console.log(`🔄 Merged ${mergedCount} additional/newer patterns from localStorage`);
+          // Save merged patterns back to config
+          await this.saveLearnedPatterns();
+        }
+      }
+    } catch (error) {
+      console.warn('⚠️ Could not merge localStorage patterns:', error.message);
+    }
+  }
+
+  /**
+   * Fallback to load from localStorage only
+   */
+  async loadFromLocalStorageFallback() {
+    try {
+      const stored = localStorage.getItem('questionLearningPatterns');
+      if (stored) {
+        const localData = JSON.parse(stored);
+        const patternsArray = localData.patterns || localData;
+        
+        if (Array.isArray(patternsArray)) {
+          this.learnedPatterns = new Map(patternsArray);
+          console.log(`📚 Fallback: Loaded ${this.learnedPatterns.size} learned patterns from localStorage`);
+        } else {
+          this.learnedPatterns = new Map();
+        }
+      } else {
+        this.learnedPatterns = new Map();
+        console.log('📚 No stored patterns found, starting fresh');
+      }
+    } catch (fallbackError) {
+      console.error('❌ Fallback load also failed:', fallbackError);
+      this.learnedPatterns = new Map();
+    }
+  }
+
+  /**
+   * Check if we have learned patterns that match the current question
+   */
+  async checkLearnedPatterns(questionText, container) {
+    // Wait for initialization to complete
+    if (!this.initialized) {
+      console.log('🧠 Waiting for learning system initialization...');
+      let attempts = 0;
+      while (!this.initialized && attempts < 50) { // Wait up to 5 seconds
+        await new Promise(resolve => setTimeout(resolve, 100));
+        attempts++;
+      }
+    }
+
+    if (this.learnedPatterns.size === 0) {
+      return null;
+    }
+
+    console.log(`🧠 Checking learned patterns for: "${questionText}"`);
+    
+    // Parse the current question
+    const currentParsed = this.parseQuestion(questionText);
+    console.log(`🔍 Current question parsed:`, currentParsed);
+    
+    let bestMatch = null;
+    let highestSimilarity = 0;
+    const SIMILARITY_THRESHOLD = 0.7; // 70% similarity required
+
+    // Check against all learned patterns
+    for (const [patternId, pattern] of this.learnedPatterns.entries()) {
+      const similarity = this.calculateQuestionSimilarity(currentParsed, pattern.parsedQuestion);
+      
+      console.log(`📊 Similarity with "${pattern.originalQuestion}": ${(similarity * 100).toFixed(1)}%`);
+      
+      if (similarity > highestSimilarity && similarity >= SIMILARITY_THRESHOLD) {
+        highestSimilarity = similarity;
+        bestMatch = pattern;
+      }
+    }
+
+    if (bestMatch) {
+      console.log(`✅ Found matching learned pattern (${(highestSimilarity * 100).toFixed(1)}% similarity)`);
+      console.log(`🎯 Original question: "${bestMatch.originalQuestion}"`);
+      console.log(`💡 Learned answer: "${bestMatch.answer}"`);
+      
+      // Try to fill the answer using the learned pattern
+      const success = await this.applyLearnedAnswer(container, bestMatch.answer, bestMatch.inputType);
+      
+      if (success) {
+        // Update usage statistics
+        bestMatch.timesUsed = (bestMatch.timesUsed || 0) + 1;
+        bestMatch.lastUsed = Date.now();
+        this.saveLearnedPatterns();
+        
+        // Show success indicator
+        this.showMatchIndicator(container, bestMatch, highestSimilarity);
+        
+        return bestMatch.answer;
+      }
+    }
+
+    console.log(`❌ No matching learned patterns found (threshold: ${(SIMILARITY_THRESHOLD * 100)}%)`);
+    return null;
+  }
+
+  /**
+   * Apply a learned answer to the appropriate input element
+   */
+  async applyLearnedAnswer(container, answer, inputType) {
+    try {
+      let input = null;
+      
+      // Find the appropriate input based on the learned input type
+      switch (inputType) {
+        case 'number':
+          input = container.querySelector('input[type="number"], input[inputmode="numeric"], input[inputmode="text"][min]');
+          break;
+        case 'text':
+          input = container.querySelector('input[type="text"], input:not([type]), input[data-testid*="input"]:not([min])');
+          break;
+        case 'textarea':
+          input = container.querySelector('textarea');
+          break;
+        case 'select':
+          input = container.querySelector('select');
+          break;
+        case 'radio':
+          // For radio buttons, find the one that matches the answer
+          const radios = container.querySelectorAll('input[type="radio"]');
+          for (const radio of radios) {
+            const label = radio.closest('label') || container.querySelector(`label[for="${radio.id}"]`);
+            const labelText = label ? label.textContent.trim().toLowerCase() : '';
+            if (labelText.includes(answer.toLowerCase()) || radio.value.toLowerCase() === answer.toLowerCase()) {
+              input = radio;
+              break;
+            }
+          }
+          break;
+        case 'checkbox':
+          input = container.querySelector('input[type="checkbox"]');
+          break;
+      }
+
+      if (!input) {
+        // Fallback: try to find any input
+        input = container.querySelector('input, textarea, select');
+      }
+
+      if (input) {
+        console.log(`🎯 Applying learned answer "${answer}" to ${input.tagName}[type="${input.type}"]`);
+        
+        if (input.type === 'radio' || input.type === 'checkbox') {
+          input.click();
+        } else if (input.tagName === 'SELECT') {
+          // Find matching option
+          const options = input.querySelectorAll('option');
+          for (const option of options) {
+            if (option.textContent.toLowerCase().includes(answer.toLowerCase()) || 
+                option.value.toLowerCase() === answer.toLowerCase()) {
+              input.value = option.value;
+              input.dispatchEvent(new Event('change', { bubbles: true }));
+              return true;
+            }
+          }
+        } else {
+          // Text input or textarea
+          input.focus();
+          input.value = answer;
+          input.dispatchEvent(new Event('input', { bubbles: true }));
+          input.dispatchEvent(new Event('change', { bubbles: true }));
+          input.blur();
+        }
+        
+        return true;
+      }
+      
+      console.warn(`⚠️ Could not find appropriate input element for learned answer`);
+      return false;
+    } catch (error) {
+      console.error('❌ Error applying learned answer:', error);
+      return false;
+    }
+  }
+
+  /**
+   * Show a visual indicator when a learned pattern is matched
+   */
+  showMatchIndicator(container, pattern, similarity) {
+    const indicator = document.createElement('div');
+    indicator.className = 'learning-match-indicator';
+    indicator.innerHTML = `
+      <div style="
+        position: absolute;
+        top: -25px;
+        right: 0;
+        background: linear-gradient(45deg, #4CAF50, #45a049);
+        color: white;
+        padding: 4px 8px;
+        border-radius: 12px;
+        font-size: 11px;
+        font-weight: bold;
+        z-index: 10000;
+        box-shadow: 0 2px 8px rgba(76, 175, 80, 0.3);
+        animation: learningMatchPulse 2s ease-in-out;
+        pointer-events: none;
+      ">
+        🎯 Learned (${(similarity * 100).toFixed(0)}%)
+      </div>
+    `;
+    
+    // Add CSS animation if not already present
+    if (!document.getElementById('learning-match-styles')) {
+      const style = document.createElement('style');
+      style.id = 'learning-match-styles';
+      style.textContent = `
+        @keyframes learningMatchPulse {
+          0% { transform: scale(0.8); opacity: 0; }
+          20% { transform: scale(1.1); opacity: 1; }
+          80% { transform: scale(1); opacity: 1; }
+          100% { transform: scale(1); opacity: 0; }
+        }
+      `;
+      document.head.appendChild(style);
+    }
+    
+    container.style.position = container.style.position || 'relative';
+    container.appendChild(indicator);
+    
+    // Remove indicator after animation
+    setTimeout(() => {
+      if (indicator.parentNode) {
+        indicator.parentNode.removeChild(indicator);
+      }
+    }, 2000);
+  }
+
+  /**
+   * Get statistics about learned patterns
+   */
+  getStats() {
+    return {
+      totalPatterns: this.learnedPatterns.size,
+      currentlyWatching: this.watchedQuestions.size,
+      patterns: Array.from(this.learnedPatterns.values()).map(p => ({
+        question: p.originalQuestion,
+        answer: p.answer,
+        confidence: p.confidence,
+        learnedAt: new Date(p.learnedAt).toLocaleString(),
+        company: p.company,
+        timesUsed: p.timesUsed || 0,
+        lastUsed: p.lastUsed ? new Date(p.lastUsed).toLocaleString() : 'Never'
+      }))
+    };
+  }
+}
+
+// Initialize the learning system
+window.questionLearningSystem = new QuestionLearningSystem();
 
 const startIndeed = () => {
   startScriptButton();
@@ -2249,13 +3466,22 @@ function waitForElementInContainer(container, selector, timeout = 3000) {
 async function fillQuestionByType(container, labelText) {
   console.log(`🔍 Analyzing question container for: "${labelText}"`);
   
+  // 🧠 FIRST: Check learned patterns before processing normally
+  if (window.questionLearningSystem) {
+    const learnedAnswer = await window.questionLearningSystem.checkLearnedPatterns(labelText, container);
+    if (learnedAnswer) {
+      console.log(`✅ Found learned answer for: "${labelText}" -> "${learnedAnswer}"`);
+      return; // Pattern matched and filled, we're done
+    }
+  }
+  
   // 1. NUMBER INPUTS (years of experience, age, etc.) - Check first since they're also text inputs
   console.log("⏳ Waiting for number input...");
   const numberInput = await waitForElementInContainer(container, 'input[type="number"], input[inputmode="numeric"], input[inputmode="text"][min], input[id*="number-input"], input[data-testid*="input"][min]');
   if (numberInput) {
     console.log(`📝 Found number input for: "${labelText}", current value: "${numberInput.value}"`);
     if (!numberInput.value) {
-      const value = getNumberInputValue(labelText);
+      const value = await getNumberInputValue(labelText);
       if (value) {
         await fillInputSafely(numberInput, value, labelText);
         return;
@@ -2272,7 +3498,7 @@ async function fillQuestionByType(container, labelText) {
   if (textInput) {
     console.log(`📝 Found text input for: "${labelText}", current value: "${textInput.value}"`);
     if (!textInput.value) {
-      const value = getTextInputValue(labelText);
+      const value = await getTextInputValue(labelText);
       if (value) {
         await fillInputSafely(textInput, value, labelText);
         return;
@@ -2289,7 +3515,7 @@ async function fillQuestionByType(container, labelText) {
   if (textarea) {
     console.log(`📝 Found textarea for: "${labelText}", current value: "${textarea.value}"`);
     if (!textarea.value) {
-      const value = getTextareaValue(labelText);
+      const value = await getTextareaValue(labelText);
       if (value) {
         await fillInputSafely(textarea, value, labelText);
         return;
@@ -2381,6 +3607,11 @@ async function fillQuestionByType(container, labelText) {
   const allInputs = container.querySelectorAll('input, textarea, select');
   console.log(`⚠️ Unknown question type for: "${labelText}"`);
   console.log(`🔍 Found ${allInputs.length} input elements:`, Array.from(allInputs).map(el => `${el.tagName}[type="${el.type}"]`));
+  
+  // 🧠 LEARNING SYSTEM - Watch for manual user input and learn from it
+  if (window.questionLearningSystem) {
+    window.questionLearningSystem.startWatching(container, labelText, allInputs);
+  }
 }
 
 /**
@@ -2414,216 +3645,90 @@ async function fillInputSafely(input, value, labelText) {
 /**
  * Get appropriate value for text inputs based on label
  */
-function getTextInputValue(labelText) {
-  const text = labelText.toLowerCase();
-  
-  // Address fields
-  if (text.includes('address') || text.includes('street')) {
-    return '123 Main Street';
+async function getTextInputValue(labelText) {
+  try {
+    const config = await loadQuestionsConfig();
+    
+    // Find matching pattern from JSON configuration
+    const matchedPattern = findPatternMatch(config.textInputPatterns || [], labelText);
+    if (matchedPattern) {
+      return matchedPattern.value;
+    }
+    
+    // Fallback to default value
+    return config.defaultValues?.textInput || 'Available upon request';
+  } catch (error) {
+    console.error('❌ Error getting text input value from config:', error);
+    // Fallback to hardcoded default
+    return 'Available upon request';
   }
-  if (text.includes('city')) {
-    return 'Dallas';
-  }
-  if (text.includes('state') || text.includes('province')) {
-    return 'TX';
-  }
-  if (text.includes('zip') || text.includes('postal')) {
-    return '75201';
-  }
-  
-  // Contact info
-  if (text.includes('phone') || text.includes('mobile') || text.includes('cell')) {
-    return '(555) 123-4567';
-  }
-  if (text.includes('email')) {
-    return 'john.doe.jobs@gmail.com';
-  }
-  if (text.includes('emergency contact')) {
-    return 'Jane Doe - (555) 987-6543';
-  }
-  
-  // Professional info
-  if (text.includes('linkedin')) {
-    return 'https://www.linkedin.com/in/johndoe';
-  }
-  if (text.includes('website') || text.includes('portfolio') || text.includes('blog')) {
-    return 'https://johndoe-portfolio.com';
-  }
-  if (text.includes('github')) {
-    return 'https://github.com/johndoe';
-  }
-  if (text.includes('referred') || text.includes('referral') || text.includes('how did you hear')) {
-    return 'Online job search';
-  }
-  if(text.includes("How many years ")){
-    return "4"
-  }
-  // Salary/compensation
-  if (text.includes('salary') || text.includes('wage') || text.includes('pay') || text.includes('compensation')) {
-    return 'Competitive/Negotiable';
-  }
-  
-  // Previous employer info
-  if (text.includes('previous employer') || text.includes('last company') || text.includes('current employer')) {
-    return 'ABC Company';
-  }
-  if (text.includes('supervisor') || text.includes('manager') || text.includes('boss')) {
-    return 'John Smith';
-  }
-  
-  // Education
-  if (text.includes('school') || text.includes('university') || text.includes('college')) {
-    return 'State University';
-  }
-  if (text.includes('major') || text.includes('degree field')) {
-    return 'Business Administration';  
-  }
-  if (text.includes('gpa')) {
-    return '3.5';
-  }
-  
-  // Certifications and licenses
-  if (text.includes('certification') || text.includes('license number')) {
-    return 'Valid - Details available upon request';
-  }
-  
-  // Skills and tools
-  if (text.includes('software') || text.includes('tools') || text.includes('programs')) {
-    return 'Microsoft Office, Google Workspace';
-  }
-  if (text.includes('programming') || text.includes('coding')) {
-    return 'JavaScript, Python, HTML/CSS';
-  }
-  
-  // Work preferences
-  if (text.includes('notice period') || text.includes('availability date')) {
-    return '2 weeks';
-  }
-  if (text.includes('start date')) {
-    return 'Immediately';
-  }
-  
-  // Generic text field
-  return 'Available upon request';
 }
 
 /**
  * Get appropriate value for textarea based on label
  */
-function getTextareaValue(labelText) {
-  const text = labelText.toLowerCase();
-  
-  if (text.includes('desired pay') || text.includes('salary') || text.includes('wage') || text.includes('compensation')) {
-    return 'Competitive salary based on experience and market standards';
+async function getTextareaValue(labelText) {
+  try {
+    const config = await loadQuestionsConfig();
+    
+    // Find matching pattern from JSON configuration
+    const matchedPattern = findPatternMatch(config.textareaPatterns || [], labelText);
+    if (matchedPattern) {
+      return matchedPattern.value;
+    }
+    
+    // Fallback to default value
+    return config.defaultValues?.textarea || 'I am interested in this position and believe I would be a valuable addition to your team.';
+  } catch (error) {
+    console.error('❌ Error getting textarea value from config:', error);
+    // Fallback to hardcoded default
+    return 'I am highly motivated and believe I would be a valuable addition to your team. I look forward to the opportunity to contribute to your organization.';
   }
-  if (text.includes('cover letter')) {
-    return 'I am excited to apply for this position and believe my skills and experience make me a great fit for your team. I am eager to contribute to your organization and grow professionally.';
-  }
-  
-  // Visa/sponsorship questions in textarea format
-  if (text.includes('visa') || text.includes('sponsorship') || text.includes('h-1b') || text.includes('work authorization')) {
-    return 'No, I do not require sponsorship for employment visa status. I am authorized to work in the United States.';
-  }
-  
-  if (text.includes('why do you want') || text.includes('why are you interested')) {
-    return 'This role aligns perfectly with my career goals and offers the opportunity to utilize my skills while contributing to a dynamic team.';
-  }
-  
-  // Indeed's "Reason for applying" question
-  if (text.includes('reason for applying') || text.includes('reason for') || text.includes('applying')) {
-    return 'I am drawn to this position because it offers an excellent opportunity to utilize my skills and experience while contributing to a growing organization. The role aligns with my career goals and I am excited about the potential to make a meaningful impact on the team.';
-  }
-  
-  if (text.includes('experience') || text.includes('background') || text.includes('relevant')) {
-    return 'I have relevant experience in this field with a proven track record of success. I am committed to delivering quality results and continuous learning.';
-  }
-  if (text.includes('strength') || text.includes('skills')) {
-    return 'My key strengths include strong communication skills, problem-solving abilities, attention to detail, and the ability to work effectively both independently and as part of a team.';
-  }
-  if (text.includes('goal') || text.includes('objective') || text.includes('career')) {
-    return 'My goal is to contribute to a successful team while developing my professional skills and advancing my career in this field.';
-  }
-  if (text.includes('challenge') || text.includes('difficult situation')) {
-    return 'I approach challenges with a positive attitude and systematic problem-solving approach. I believe in learning from every experience and adapting to find effective solutions.';
-  }
-  if (text.includes('additional') || text.includes('anything else') || text.includes('comments')) {
-    return 'I am enthusiastic about this opportunity and would welcome the chance to discuss how my background and skills can contribute to your team. Thank you for your consideration.';
-  }
-  if (text.includes('availability') || text.includes('schedule')) {
-    return 'I am flexible with scheduling and available to work various shifts as needed. I can start immediately or with appropriate notice period.';
-  }
-  if (text.includes('education') || text.includes('qualifications')) {
-    return 'I have the necessary educational background and qualifications for this role, with a commitment to ongoing professional development.';
-  }
-  
-  return 'I am highly motivated and believe I would be a valuable addition to your team. I look forward to the opportunity to contribute to your organization.';
 }
 
 /**
  * Get appropriate value for number inputs (years of experience, etc.)
  */
-function getNumberInputValue(labelText) {
-  const text = labelText.toLowerCase();
-  
-  // Years of experience questions
-  if (text.includes('years') && text.includes('experience')) {
-    // Technical leadership
-    if (text.includes('technical') && (text.includes('leader') || text.includes('lead'))) {
-      return '3'; // 3 years technical leadership experience
+async function getNumberInputValue(labelText) {
+  try {
+    const config = await loadQuestionsConfig();
+    
+    // Find matching pattern from JSON configuration
+    // For number patterns, we need special handling for experience questions with exclusions
+    const text = labelText.toLowerCase();
+    
+    // Find the most specific match (pattern with most matching keywords)
+    let bestMatch = null;
+    let maxMatches = 0;
+    
+    for (const pattern of config.numberInputPatterns || []) {
+      const matchedKeywords = pattern.keywords.filter(keyword => 
+        text.includes(keyword.toLowerCase())
+      );
+      
+      // Special handling for Java vs JavaScript
+      if (pattern.keywords.includes('java') && !pattern.keywords.includes('javascript') && text.includes('javascript')) {
+        continue; // Skip Java pattern if text contains JavaScript
+      }
+      
+      if (matchedKeywords.length === pattern.keywords.length && matchedKeywords.length > maxMatches) {
+        maxMatches = matchedKeywords.length;
+        bestMatch = pattern;
+      }
     }
-    // iOS development
-    if (text.includes('ios') || text.includes('swift')) {
-      return '5'; // 5 years iOS development
+    
+    if (bestMatch) {
+      console.log(`🔢 Found number pattern match: ${bestMatch.keywords.join(', ')} -> "${bestMatch.value}"`);
+      return bestMatch.value;
     }
-    // Android development
-    if (text.includes('android') || text.includes('kotlin') || text.includes('java')) {
-      return '4'; // 4 years Android development
-    }
-    // Web development
-    if (text.includes('web') || text.includes('javascript') || text.includes('react') || text.includes('angular')) {
-      return '6'; // 6 years web development
-    }
-    // Python experience
-    if (text.includes('python')) {
-      return '4'; // 4 years Python
-    }
-    // Java experience
-    if (text.includes('java') && !text.includes('javascript')) {
-      return '5'; // 5 years Java
-    }
-    // Management experience
-    if (text.includes('management') || text.includes('manager') || text.includes('managing')) {
-      return '2'; // 2 years management
-    }
-    // Sales experience
-    if (text.includes('sales') || text.includes('selling')) {
-      return '3'; // 3 years sales
-    }
-    // Customer service
-    if (text.includes('customer') || text.includes('service') || text.includes('support')) {
-      return '4'; // 4 years customer service
-    }
-    // Generic experience
-    return '3'; // Default 3 years for any experience question
+    
+    // Fallback to default value
+    return config.defaultValues?.numberInput || '1';
+  } catch (error) {
+    console.error('❌ Error getting number input value from config:', error);
+    // Fallback to hardcoded default
+    return '1';
   }
-  
-  // Age questions
-  if (text.includes('age') || text.includes('old')) {
-    return '25'; // 25 years old
-  }
-  
-  // Salary expectations (in thousands)
-  if (text.includes('salary') || text.includes('wage') || text.includes('pay')) {
-    return '65'; // $65k expectation
-  }
-  
-  // Hours per week
-  if (text.includes('hours') && text.includes('week')) {
-    return '40'; // 40 hours per week
-  }
-  
-  // Default number
-  return '1';
 }
 
 /**
@@ -3047,24 +4152,58 @@ async function clickRadioButton(radioElement) {
  * Main dynamic workflow that handles unlimited question pages
  */
 async function runDynamicApplicationWorkflow() {
-  console.log("🚀 Starting dynamic application workflow...");
+  console.log("🚀 Starting enhanced dynamic application workflow...");
+  
+  // Initialize tracking
+  window.pageLoadTime = Date.now();
+  window.formInteractionCount = 0;
   
   try {
     // Step 1: Click Apply button if not already on form
     if (!window.location.href.includes('smartapply.indeed.com')) {
+      console.log("📍 Step 1: Navigating to application form");
       await clickApplyButton();
+    } else {
+      console.log("✅ Already on application form");
     }
     
-    // Step 2: Run the unlimited workflow loop
-    await runUnlimitedWorkflowLoop();
+    // Step 2: Run the unlimited workflow loop with detailed tracking
+    console.log("📍 Step 2: Processing application forms");
+    const workflowResult = await runUnlimitedWorkflowLoop();
     
-    // Step 3: Check for final success
-    const success = await checkApplicationSuccess();
-    return success ? "pass" : "fail_no_success_confirmation";
+    // Step 3: Comprehensive success verification
+    console.log("📍 Step 3: Verifying application submission");
+    const successResult = await checkApplicationSuccess();
+    
+    // Step 4: Generate detailed result
+    const interactionCount = window.formInteractionCount || 0;
+    console.log(`📊 Application Summary:`);
+    console.log(`   • Form interactions: ${interactionCount}`);
+    console.log(`   • Workflow completed: ${workflowResult.completed}`);
+    console.log(`   • Success confidence: ${successResult ? 'HIGH' : 'LOW'}`);
+    
+    // Determine result based on multiple factors
+    if (successResult && interactionCount > 0) {
+      return "pass"; // High confidence success with form interactions
+    } else if (successResult && interactionCount === 0) {
+      return "pass_no_forms_needed"; // Success but no forms to fill
+    } else if (!successResult && interactionCount > 0) {
+      return "fail_forms_filled_no_confirmation"; // Filled forms but no success confirmation
+    } else if (!successResult && interactionCount === 0) {
+      return "fail_no_forms_no_confirmation"; // No forms filled and no success
+    } else {
+      return "fail_unknown_state"; // Unclear state
+    }
     
   } catch (error) {
     console.error("❌ Dynamic workflow failed:", error);
-    return "fail_workflow_error";
+    const interactionCount = window.formInteractionCount || 0;
+    
+    if (interactionCount > 0) {
+      return "fail_exception_after_forms"; // Had interactions before failing
+    } else {
+      return "fail_exception_before_forms"; // Failed before any interactions
+    }
   }
 }
 
@@ -3213,6 +4352,14 @@ async function runUnlimitedWorkflowLoop() {
   }
   
   console.log(`✅ Workflow loop completed - processed ${pageCount} pages`);
+  
+  return {
+    completed: true,
+    pagesProcessed: pageCount,
+    consecutiveFailures: consecutiveFailures,
+    reachedMaxPages: pageCount >= maxPages,
+    tooManyFailures: consecutiveFailures >= 3
+  };
 }
 
 /**
@@ -3222,27 +4369,45 @@ async function processCurrentPage() {
   console.log("🔍 Analyzing current page...");
   
   let processedSomething = false;
+  let interactionCount = 0;
+  
+  // Initialize form interaction tracking
+  if (!window.formInteractionCount) {
+    window.formInteractionCount = 0;
+  }
   
   try {
     // Fill contact information if present
     if (await hasContactInfo()) {
       console.log("📝 Processing contact information...");
-      await fillContactInfo();
-      processedSomething = true;
+      const contactResult = await fillContactInfo();
+      if (contactResult.filled > 0) {
+        processedSomething = true;
+        interactionCount += contactResult.filled;
+        console.log(`✅ Filled ${contactResult.filled} contact fields`);
+      }
     }
     
     // Fill employer questions if present  
     if (await hasEmployerQuestions()) {
       console.log("📝 Processing employer questions...");
-      await fillEmployerQuestions();
-      processedSomething = true;
+      const questionResult = await fillEmployerQuestions();
+      if (questionResult.filled > 0) {
+        processedSomething = true;
+        interactionCount += questionResult.filled;
+        console.log(`✅ Answered ${questionResult.filled} employer questions`);
+      }
     }
     
     // Handle resume selection if present
     if (await hasResumeSelection()) {
       console.log("📝 Processing resume selection...");
-      await selectResume();
-      processedSomething = true;
+      const resumeResult = await selectResume();
+      if (resumeResult.selected) {
+        processedSomething = true;
+        interactionCount += 1;
+        console.log(`✅ Selected resume`);
+      }
     }
     
     // Handle document uploads if present
@@ -3378,55 +4543,212 @@ async function findSubmitButton() {
 /**
  * Check if current page is the success page
  */
-async function isSuccessPage() {
-  const pageText = document.body.textContent.toLowerCase();
-  const successKeywords = [
+/**
+ * Comprehensive multi-level success verification
+ * Returns confidence score (0-1) and evidence array
+ */
+async function performSuccessVerification() {
+  const evidence = [];
+  let confidence = 0;
+  
+  // LEVEL 1: Strong Success Indicators (High Confidence)
+  console.log("🔍 Level 1: Strong Success Indicators");
+  
+  const strongSuccessKeywords = [
     'application submitted',
     'thank you for applying',
-    'successfully applied', 
+    'successfully applied',
     'application received',
-    'we have received your application'
+    'we have received your application',
+    'application complete',
+    'submission successful',
+    'you have successfully applied'
   ];
+  
+  const pageText = document.body.textContent.toLowerCase();
+  const strongMatches = strongSuccessKeywords.filter(keyword => pageText.includes(keyword));
+  
+  if (strongMatches.length > 0) {
+    confidence += 0.6;
+    evidence.push(`Strong success text: ${strongMatches.join(', ')}`);
+  }
+  
+  // Check for Indeed-specific success URLs
+  if (window.location.href.includes('indeed.com/viewjob') && 
+      (pageText.includes('applied') || pageText.includes('thank you'))) {
+    confidence += 0.3;
+    evidence.push('Indeed success URL pattern with confirmation text');
+  }
+  
+  // LEVEL 2: Visual Success Elements (Medium Confidence)
+  console.log("🔍 Level 2: Visual Success Elements");
   
   const successSelectors = [
-    '.success',
-    '.confirmation',
-    '[data-testid*="success"]',
-    '[data-testid*="confirmation"]'
+    '.success', '.confirmation', '.complete', '.submitted',
+    '[data-testid*="success"]', '[data-testid*="confirmation"]',
+    '[class*="success"]', '[class*="confirmation"]',
+    '.checkmark', '.check-circle', '.fa-check'
   ];
   
-  // Check text content
-  if (successKeywords.some(keyword => pageText.includes(keyword))) {
-    return true;
+  const foundSuccessElements = successSelectors.filter(sel => document.querySelector(sel));
+  if (foundSuccessElements.length > 0) {
+    confidence += 0.2 * Math.min(foundSuccessElements.length, 3);
+    evidence.push(`Success UI elements: ${foundSuccessElements.join(', ')}`);
   }
   
-  // Check CSS selectors
-  if (successSelectors.some(sel => document.querySelector(sel))) {
-    return true;
+  // LEVEL 3: Form State Analysis (Medium Confidence)
+  console.log("🔍 Level 3: Form State Analysis");
+  
+  // Check if all forms are gone (submitted)
+  const remainingForms = document.querySelectorAll('form');
+  const remainingInputs = document.querySelectorAll('input[type="text"], input[type="email"], textarea');
+  const submitButtons = document.querySelectorAll('button[type="submit"], button:contains("submit"), button:contains("apply")');
+  
+  if (remainingForms.length === 0 && remainingInputs.length === 0) {
+    confidence += 0.25;
+    evidence.push('All forms and inputs removed (submitted)');
   }
   
-  return false;
+  // Check for disabled/hidden submit buttons (indicates completion)
+  const disabledSubmits = Array.from(submitButtons).filter(btn => 
+    btn.disabled || btn.style.display === 'none' || !btn.offsetParent
+  );
+  
+  if (disabledSubmits.length > 0) {
+    confidence += 0.15;
+    evidence.push('Submit buttons disabled/hidden');
+  }
+  
+  // LEVEL 4: URL Pattern Analysis (Low-Medium Confidence)
+  console.log("🔍 Level 4: URL Pattern Analysis");
+  
+  const successUrlPatterns = [
+    'success', 'complete', 'confirmation', 'submitted', 'thank-you',
+    'applied', 'application-sent', 'done'
+  ];
+  
+  const currentUrl = window.location.href.toLowerCase();
+  const urlMatches = successUrlPatterns.filter(pattern => currentUrl.includes(pattern));
+  
+  if (urlMatches.length > 0) {
+    confidence += 0.2;
+    evidence.push(`Success URL patterns: ${urlMatches.join(', ')}`);
+  }
+  
+  // LEVEL 5: Error Detection (Negative Indicators)
+  console.log("🔍 Level 5: Error Detection");
+  
+  const errorKeywords = [
+    'error', 'invalid', 'required', 'missing', 'failed', 'unsuccessful',
+    'please fill', 'this field is required', 'cannot be blank'
+  ];
+  
+  const errorMatches = errorKeywords.filter(keyword => pageText.includes(keyword));
+  const errorElements = document.querySelectorAll('.error, .invalid, [class*="error"]');
+  
+  if (errorMatches.length > 0 || errorElements.length > 0) {
+    confidence -= 0.3;
+    evidence.push(`Errors detected: ${errorMatches.join(', ')} | ${errorElements.length} error elements`);
+  }
+  
+  // LEVEL 6: Interaction Verification (Medium Confidence)
+  console.log("🔍 Level 6: Interaction Verification");
+  
+  // Check if we actually filled out forms
+  const formInteractionCount = window.formInteractionCount || 0;
+  if (formInteractionCount > 0) {
+    confidence += 0.1;
+    evidence.push(`Form interactions completed: ${formInteractionCount}`);
+  }
+  
+  // Check for recently filled inputs (still have our values)
+  const filledInputs = Array.from(document.querySelectorAll('input, textarea')).filter(input => 
+    input.value && input.value.length > 0
+  );
+  
+  if (filledInputs.length > 3) {
+    confidence += 0.1;
+    evidence.push(`${filledInputs.length} inputs contain data`);
+  }
+  
+  // LEVEL 7: Time-based Analysis (Low Confidence)
+  console.log("🔍 Level 7: Time-based Analysis");
+  
+  // If we've been on this page for a while without forms, likely success
+  const pageLoadTime = window.pageLoadTime || Date.now();
+  const timeOnPage = Date.now() - pageLoadTime;
+  
+  if (timeOnPage > 5000 && remainingForms.length === 0) {
+    confidence += 0.1;
+    evidence.push('Extended time on page without active forms');
+  }
+  
+  // Cap confidence at 1.0
+  confidence = Math.min(confidence, 1.0);
+  
+  console.log(`📊 Success Verification Complete: ${(confidence * 100).toFixed(1)}% confidence`);
+  console.log(`📝 Evidence: ${evidence.length} indicators found`);
+  
+  return { confidence, evidence };
+}
+
+/**
+ * Legacy success page check (kept for compatibility)
+ */
+async function isSuccessPage() {
+  const verification = await performSuccessVerification();
+  return verification.confidence >= 0.6;
 }
 
 /**
  * Final success check with timeout
  */
 async function checkApplicationSuccess() {
-  console.log("🔍 Checking for application success...");
+  console.log("🔍 Starting comprehensive application success verification...");
   
   let attempts = 0;
-  while (attempts < 15) {
-    if (await isSuccessPage()) {
-      console.log("🎉 Application submitted successfully!");
+  let lastPageUrl = window.location.href;
+  let formInteractionCount = window.formInteractionCount || 0;
+  
+  while (attempts < 20) { // Increased attempts for thorough checking
+    // Multi-level success verification
+    const successLevel = await performSuccessVerification();
+    
+    if (successLevel.confidence >= 0.8) {
+      console.log(`🎉 HIGH CONFIDENCE SUCCESS (${(successLevel.confidence * 100).toFixed(1)}%): Application submitted!`);
+      console.log(`📊 Success Evidence:`, successLevel.evidence);
       return true;
+    }
+    
+    if (successLevel.confidence >= 0.6) {
+      console.log(`⚠️ MEDIUM CONFIDENCE (${(successLevel.confidence * 100).toFixed(1)}%): Likely success, continuing verification...`);
+    }
+    
+    // Check for page changes (indicates progression)
+    const currentUrl = window.location.href;
+    if (currentUrl !== lastPageUrl) {
+      console.log(`📍 Page changed: ${lastPageUrl} → ${currentUrl}`);
+      lastPageUrl = currentUrl;
     }
     
     await new Promise(r => setTimeout(r, 1000));
     attempts++;
-    console.log(`🔄 Checking success... ${attempts}/15`);
+    
+    if (attempts % 5 === 0) {
+      console.log(`🔄 Success verification progress: ${attempts}/20 (${(successLevel.confidence * 100).toFixed(1)}% confidence)`);
+    }
   }
   
-  console.log("❌ No success confirmation found");
+  // Final verification with relaxed criteria
+  const finalCheck = await performSuccessVerification();
+  if (finalCheck.confidence >= 0.5) {
+    console.log(`✅ MODERATE SUCCESS (${(finalCheck.confidence * 100).toFixed(1)}%): Application likely submitted`);
+    console.log(`📊 Final Evidence:`, finalCheck.evidence);
+    return true;
+  }
+  
+  console.log(`❌ LOW CONFIDENCE (${(finalCheck.confidence * 100).toFixed(1)}%): Application submission unclear`);
+  console.log(`📊 Final Evidence:`, finalCheck.evidence);
   return false;
 }
 
@@ -3454,24 +4776,45 @@ async function hasLegalDisclaimer() {
 }
 
 /**
- * Simplified form filling functions for dynamic workflow
+ * Enhanced form filling functions with interaction tracking
  */
 async function fillContactInfo() {
+  let filled = 0;
+  
   // Fill basic contact fields
   const nameInput = await waitForElement('input[name*="name"], input[placeholder*="name"]', 2000);
   if (nameInput && !nameInput.value) {
-    await fillInputSafely(nameInput, 'John Smith', 'name');
+    const success = await fillInputSafely(nameInput, 'John Smith', 'name');
+    if (success) filled++;
   }
   
   const emailInput = await waitForElement('input[name*="email"], input[type="email"]', 2000);
   if (emailInput && !emailInput.value) {
-    await fillInputSafely(emailInput, 'john.smith@email.com', 'email');
+    const success = await fillInputSafely(emailInput, 'john.smith@email.com', 'email');
+    if (success) filled++;
   }
   
   const phoneInput = await waitForElement('input[name*="phone"], input[type="tel"]', 2000);
   if (phoneInput && !phoneInput.value) {
-    await fillInputSafely(phoneInput, '555-123-4567', 'phone');
+    const success = await fillInputSafely(phoneInput, '555-123-4567', 'phone');
+    if (success) filled++;
   }
+  
+  // Track additional contact fields
+  const addressInput = await waitForElement('input[name*="address"], input[placeholder*="address"]', 1000);
+  if (addressInput && !addressInput.value) {
+    const success = await fillInputSafely(addressInput, '123 Main Street', 'address');
+    if (success) filled++;
+  }
+  
+  const cityInput = await waitForElement('input[name*="city"], input[placeholder*="city"]', 1000);
+  if (cityInput && !cityInput.value) {
+    const success = await fillInputSafely(cityInput, 'Dallas', 'city');
+    if (success) filled++;
+  }
+  
+  window.formInteractionCount += filled;
+  return { filled };
 }
 
 async function selectResume() {
@@ -3479,12 +4822,53 @@ async function selectResume() {
   if (resumeRadio && !resumeRadio.checked) {
     resumeRadio.checked = true;
     resumeRadio.dispatchEvent(new Event('change', { bubbles: true }));
+    window.formInteractionCount = (window.formInteractionCount || 0) + 1;
+    return { selected: true };
   }
+  return { selected: false };
+}
+
+async function fillEmployerQuestions() {
+  let filled = 0;
+  
+  // Find all question containers
+  const questionContainers = document.querySelectorAll('.ia-Questions-item, [id^="q_"], [data-testid*="input-q_"]');
+  
+  console.log(`📝 Found ${questionContainers.length} employer questions to process`);
+  
+  for (const container of questionContainers) {
+    try {
+      // Extract question text
+      const questionText = container.textContent || container.innerText || '';
+      if (questionText.trim().length === 0) continue;
+      
+      console.log(`❓ Processing question: "${questionText.substring(0, 100)}..."`);
+      
+      // Use the existing fillQuestionByType function
+      const success = await fillQuestionByType(container, questionText);
+      if (success) {
+        filled++;
+        console.log(`✅ Successfully filled question`);
+      } else {
+        console.log(`⚠️ Could not fill question`);
+      }
+      
+      // Small delay between questions
+      await new Promise(r => setTimeout(r, 500));
+      
+    } catch (error) {
+      console.error(`❌ Error processing question:`, error);
+    }
+  }
+  
+  window.formInteractionCount = (window.formInteractionCount || 0) + filled;
+  return { filled };
 }
 
 async function handleDocumentUploads() {
   // Skip file uploads for now - would need actual file handling
   console.log("📄 Skipping document uploads");
+  return { uploaded: 0 };
 }
 
 async function acceptLegalDisclaimer() {
@@ -3496,3 +4880,1175 @@ async function acceptLegalDisclaimer() {
     }
   }
 }
+
+
+
+
+
+
+
+// Nouns (things , titles, concepts, places, people)
+
+const nouns = [
+    "Ability",
+    "Account",
+    "Achievement",
+    "Application",
+    "Assessment",
+    "Benefit",
+    "Candidate",
+    "Career",
+    "Certification",
+    "Challenge",
+    "Client",
+    "Communication",
+    "Company",
+    "Compensation",
+    "Contract",
+    "Culture",
+    "Deadline",
+    "Degree",
+    "Department",
+    "Description",
+    "Development",
+    "Education",
+    "Employer",
+    "Employment",
+    "Environment",
+    "Experience",
+    "Goal",
+    "Interview",
+    "Job",
+    "Location",
+    "Manager",
+    "Mistake",
+    "Opportunity",
+    "Organization",
+    "Pay",
+    "Position",
+    "Posting",
+    "Problem",
+    "Project",
+    "Qualification",
+    "Reference",
+    "Requirement",
+    "Responsibility",
+    "Resume",
+    "Role",
+    "Salary",
+    "Schedule",
+    "Skill",
+    "Staff",
+    "Strength",
+    "Task",
+    "Team",
+    "Technology",
+    "Training",
+    "Weakness",
+    "Work"
+];
+
+
+// Verbs (actions, occurrences, states of being)
+const verbs = [
+    "Achieve",
+    "Adapt",
+    "Analyze",
+    "Apply",
+    "Assist",
+    "Build",
+    "Collaborate",
+    "Communicate",
+    "Complete",
+    "Coordinate",
+    "Create",
+    "Deliver",
+    "Demonstrate",
+    "Develop",
+    "Earn",
+    "Execute",
+    "Explain",
+    "Facilitate",
+    "Handle",
+    "Implement",
+    "Improve",
+    "Lead",
+    "Learn",
+    "Manage",
+    "Organize",
+    "Oversee",
+    "Perform",
+    "Plan",
+    "Prioritize",
+    "Provide",
+    "Recruit",
+    "Report",
+    "Research",
+    "Resolve",
+    "Respond",
+    "Review",
+    "Support",
+    "Train",
+    "Troubleshoot",
+    "Utilize",
+    "Work"
+];
+
+// propernouns (specific names of people, places, or organizations)
+
+const propernouns = [
+    "Adobe",
+    "Amazon",
+    "Apple",
+    "Bachelor’s Degree",
+    "Google",
+    "Indeed",
+    "Java",
+    "LinkedIn",
+    "Microsoft",
+    "MongoDB",
+    "Oracle",
+    "Python",
+    "Salesforce",
+    "SQL",
+    "Tableau",
+    "Twitter (X)",
+    "United States",
+    "Visa",
+    "Zoom"
+];
+
+// subjects (topics, themes, or areas of interest)
+const subjects = [
+    "Applicant",
+    "Candidate",
+    "Client",
+    "Employee",
+    "Employer",
+    "Graduate",
+    "Hiring Manager",
+    "Individual",
+    "Intern",
+    "Job Seeker",
+    "Manager",
+    "Professional",
+    "Recruiter",
+    "Student",
+    "Supervisor",
+    "Team Member",
+    "Worker"
+];
+
+const userShortResponce = [
+    "Agree",
+    "Answer",
+    "Approve",
+    "Complete",
+    "Confirm",
+    "Decline",
+    "Deny",
+    "Enter",
+    "Finish",
+    "Mark",
+    "Select",
+    "Submit",
+    "Toggle",
+    "Yes",
+    "No"
+];
+
+const actionWorkds = [
+    "Checked",
+    "Chosen",
+    "Completed",
+    "Filled",
+    "Ignored",
+    "Opted",
+    "Selected",
+    "Started",
+    "Submitted",
+    "Updated"
+];
+
+// Function to normalize text for better matching
+function normalizeText(text) {
+    return text.toLowerCase()
+               .replace(/[.,!?;:]/g, '')  // Remove punctuation
+               .replace(/\s+/g, ' ')      // Normalize whitespace
+               .trim();
+}
+
+/**
+ * Multi-Modal Weighted Semantic Similarity Algorithm
+ * 
+ * Formula: S(Q,A) = Σ(Wi × Mi) + B(Q,A) + C(Q)
+ * 
+ * Where:
+ * - S(Q,A) = Similarity score between Question Q and Answer A
+ * - Wi = Weight for linguistic category i
+ * - Mi = |category_i(Q) ∩ category_i(A)| (intersection cardinality)
+ * - B(Q,A) = Σ(15 × δ(proper_noun_i, Q, A)) (exact phrase bonuses)
+ * - C(Q) = ⌊confidence(Q) × 10⌋ (category coherence bonus)
+ * 
+ * Weights: W₁=12(ProperNouns), W₂=6(Nouns), W₃=4(Verbs), W₄=3(Subjects), 
+ *          W₅=8(ShortResponse), W₆=5(Actions), W₇=1(Direct)
+ * 
+ * Time Complexity: O(|Q| × |A| × |W|)
+ * Space Complexity: O(|Q| + |A| + |W|)
+ */
+function calculateScore(qustion, answer, nouns, verbs, propernouns, subjects, userShortResponce, actionWorkds) {
+    // turns qustions into array of words
+    const qustionWords = normalizeText(qustion).split(" ");
+    const answerWords = normalizeText(answer).split(" ");
+
+    // Extract word types for question
+    const qustionNouns = qustionWords.filter(word => nouns.map(n => n.toLowerCase()).includes(word));
+    const qustionVerbs = qustionWords.filter(word => verbs.map(v => v.toLowerCase()).includes(word));
+    const qustionProperNouns = qustionWords.filter(word => propernouns.map(p => p.toLowerCase()).includes(word));
+    const qustionSubjects = qustionWords.filter(word => subjects.map(s => s.toLowerCase()).includes(word));
+    const qustionShortResponse = qustionWords.filter(word => userShortResponce.map(r => r.toLowerCase()).includes(word));
+    const qustionActions = qustionWords.filter(word => actionWorkds.map(a => a.toLowerCase()).includes(word));
+
+    // Extract word types for answer
+    const answerNouns = answerWords.filter(word => nouns.map(n => n.toLowerCase()).includes(word));
+    const answerVerbs = answerWords.filter(word => verbs.map(v => v.toLowerCase()).includes(word));
+    const answerProperNouns = answerWords.filter(word => propernouns.map(p => p.toLowerCase()).includes(word));
+    const answerSubjects = answerWords.filter(word => subjects.map(s => s.toLowerCase()).includes(word));
+    const answerShortResponse = answerWords.filter(word => userShortResponce.map(r => r.toLowerCase()).includes(word));
+    const answerActions = answerWords.filter(word => actionWorkds.map(a => a.toLowerCase()).includes(word));
+
+    // Initialize score
+    let score = 0;
+    
+    // Dynamic category detection for better scoring
+    const questionCategory = detectQuestionCategory(qustion, propernouns, nouns, verbs);
+    
+    // Weighted scoring based on linguistic feature matching
+    // Formula component: Σ(Wi × |categoryi(Q) ∩ categoryi(A)|)
+    
+    const properNounMatches = qustionProperNouns.filter(word => answerProperNouns.includes(word));
+    score += properNounMatches.length * 12;  // W₁ = 12 (highest semantic value)
+    
+    const nounMatches = qustionNouns.filter(word => answerNouns.includes(word));
+    score += nounMatches.length * 6;  // W₂ = 6 (high concept matching)
+    
+    const verbMatches = qustionVerbs.filter(word => answerVerbs.includes(word));
+    score += verbMatches.length * 4;  // W₃ = 4 (action alignment)
+    
+    const subjectMatches = qustionSubjects.filter(word => answerSubjects.includes(word));
+    score += subjectMatches.length * 3;  // W₄ = 3 (entity recognition)
+    
+    const shortResponseMatches = qustionShortResponse.filter(word => answerShortResponse.includes(word));
+    score += shortResponseMatches.length * 8;  // W₅ = 8 (intent matching)
+    
+    const actionMatches = qustionActions.filter(word => answerActions.includes(word));
+    score += actionMatches.length * 5;  // W₆ = 5 (status understanding)
+    
+    const directMatches = qustionWords.filter(word => answerWords.includes(word));
+    score += directMatches.length * 1;  // W₇ = 1 (fallback similarity)
+    
+    // Bonus scoring: B(Q,A) = Σ(15 × δ(pi, Q, A))
+    const lowerQuestion = qustion.toLowerCase();
+    const lowerAnswer = answer.toLowerCase();
+    
+    // Exact phrase matching bonus (δ function: 1 if phrase exists in both, 0 otherwise)
+    propernouns.forEach(prop => {
+        const propLower = prop.toLowerCase();
+        if (lowerQuestion.includes(propLower) && lowerAnswer.includes(propLower)) {
+            score += 15; // Technology/certification exact match bonus
+        }
+    });
+    
+    // Category coherence bonus: C(Q) = ⌊confidence(Q) × 10⌋
+    if (questionCategory.confidence > 0.7) {
+        score += Math.floor(questionCategory.confidence * 10);
+    }
+    
+    return {
+        score,
+        category: questionCategory,
+        details: {
+            properNounMatches,
+            nounMatches,
+            verbMatches,
+            subjectMatches,
+            shortResponseMatches,
+            actionMatches,
+            directMatches
+        }
+    };
+}
+
+// Main function to find the best matching answer for a question
+function findBestAnswer(question, answerArray, nouns, verbs, propernouns, subjects, userShortResponce, actionWorkds) {
+    let bestAnswer = "";
+    let highestScore = 0;
+    let bestDetails = {};
+    
+    answerArray.forEach(answer => {
+        const result = calculateScore(question, answer, nouns, verbs, propernouns, subjects, userShortResponce, actionWorkds);
+        
+        if (result.score > highestScore) {
+            highestScore = result.score;
+            bestAnswer = answer;
+            bestDetails = result.details;
+        }
+    });
+    
+    return {
+        question,
+        bestAnswer,
+        score: highestScore,
+        confidence: Math.min(highestScore / 10, 1), // Normalize to 0-1 range
+        details: bestDetails
+    };
+}
+
+/**
+ * Find All Relevant Answers (Many-to-Many Algorithm Extension)
+ * 
+ * Returns multiple answers that meet minimum similarity threshold
+ * Supports one question → multiple answers relationship
+ * 
+ * @param {string} question - The input question
+ * @param {Array} answerArray - Array of possible answers
+ * @param {number} minThreshold - Minimum similarity score (default: 5)
+ * @param {number} maxResults - Maximum number of results (default: 5)
+ * @returns {Array} Sorted array of matching answers with confidence scores
+ */
+function findAllRelevantAnswers(question, answerArray, nouns, verbs, propernouns, subjects, userShortResponce, actionWorkds, minThreshold = 5, maxResults = 5) {
+    const allMatches = [];
+    
+    answerArray.forEach(answer => {
+        const result = calculateScore(question, answer, nouns, verbs, propernouns, subjects, userShortResponce, actionWorkds);
+        
+        // Only include answers above minimum threshold
+        if (result.score >= minThreshold) {
+            allMatches.push({
+                answer: answer,
+                score: result.score,
+                confidence: Math.min(result.score / 10, 1), // Normalize to 0-1 range
+                details: result.details,
+                relevanceLevel: result.score >= 15 ? 'high' : result.score >= 10 ? 'medium' : 'low'
+            });
+        }
+    });
+    
+    // Sort by score (descending) and limit results
+    return allMatches
+        .sort((a, b) => b.score - a.score)
+        .slice(0, maxResults)
+        .map((match, index) => ({
+            ...match,
+            rank: index + 1,
+            question: question
+        }));
+}
+
+/**
+ * Reverse Lookup: Find Questions for Answer (Many-to-Many Extension)
+ * 
+ * Given an answer, find all questions that could lead to it
+ * Supports one answer → multiple questions relationship
+ * 
+ * @param {string} targetAnswer - The answer to find questions for
+ * @param {Array} questionArray - Array of possible questions
+ * @param {number} minThreshold - Minimum similarity score (default: 5)
+ * @returns {Array} Questions that could lead to this answer
+ */
+function findQuestionsForAnswer(targetAnswer, questionArray, nouns, verbs, propernouns, subjects, userShortResponce, actionWorkds, minThreshold = 5) {
+    const matchingQuestions = [];
+    
+    questionArray.forEach(question => {
+        const result = calculateScore(question, targetAnswer, nouns, verbs, propernouns, subjects, userShortResponce, actionWorkds);
+        
+        if (result.score >= minThreshold) {
+            matchingQuestions.push({
+                question: question,
+                score: result.score,
+                confidence: Math.min(result.score / 10, 1),
+                details: result.details,
+                targetAnswer: targetAnswer
+            });
+        }
+    });
+    
+    return matchingQuestions.sort((a, b) => b.score - a.score);
+}
+
+// Function to process multiple questions against multiple answers
+function processQuestionAnswerPairs(questionArray, answerArray, nouns, verbs, propernouns, subjects, userShortResponce, actionWorkds) {
+    return questionArray.map(question => 
+        findBestAnswer(question, answerArray, nouns, verbs, propernouns, subjects, userShortResponce, actionWorkds)
+    );
+}
+
+/**
+ * Many-to-Many Question-Answer Processing
+ * 
+ * Processes multiple questions and finds all relevant answers for each
+ * Creates comprehensive mapping of questions to multiple valid answers
+ * 
+ * @param {Array} questionArray - Array of questions to process
+ * @param {Array} answerArray - Array of possible answers
+ * @param {Object} options - Processing options {minThreshold, maxAnswers, includeReverse}
+ * @returns {Object} Complete many-to-many mapping results
+ */
+function processMultipleAnswers(questionArray, answerArray, nouns, verbs, propernouns, subjects, userShortResponce, actionWorkds, options = {}) {
+    const {
+        minThreshold = 5,
+        maxAnswers = 5,
+        includeReverse = false
+    } = options;
+    
+    const questionToAnswers = questionArray.map(question => ({
+        question: question,
+        matches: findAllRelevantAnswers(
+            question, 
+            answerArray, 
+            nouns, verbs, propernouns, subjects, userShortResponce, actionWorkds,
+            minThreshold, 
+            maxAnswers
+        )
+    }));
+    
+    const results = {
+        questionToAnswers: questionToAnswers,
+        summary: {
+            totalQuestions: questionArray.length,
+            questionsWithMatches: questionToAnswers.filter(q => q.matches.length > 0).length,
+            questionsWithMultipleMatches: questionToAnswers.filter(q => q.matches.length > 1).length,
+            averageMatchesPerQuestion: questionToAnswers.reduce((sum, q) => sum + q.matches.length, 0) / questionArray.length
+        }
+    };
+    
+    // Optional: Include reverse mapping (answer → questions)
+    if (includeReverse) {
+        const answerToQuestions = answerArray.map(answer => ({
+            answer: answer,
+            matchingQuestions: findQuestionsForAnswer(
+                answer, 
+                questionArray, 
+                nouns, verbs, propernouns, subjects, userShortResponce, actionWorkds,
+                minThreshold
+            )
+        }));
+        
+        results.answerToQuestions = answerToQuestions;
+        results.summary.totalAnswers = answerArray.length;
+        results.summary.answersWithMatches = answerToQuestions.filter(a => a.matchingQuestions.length > 0).length;
+        results.summary.answersWithMultipleMatches = answerToQuestions.filter(a => a.matchingQuestions.length > 1).length;
+    }
+    
+    return results;
+}
+
+/**
+ * Format Multiple Answers for Different Input Types
+ * 
+ * Takes multiple answer matches and formats them appropriately
+ * for different UI input types (radio, dropdown, checkbox, text)
+ */
+function formatMultipleAnswerResponse(matches, inputType, options = {}) {
+    const {
+        combineAnswers = true,
+        includeConfidence = true,
+        maxLength = 200
+    } = options;
+    
+    if (!matches || matches.length === 0) {
+        return { formattedResponse: "No suitable answers found", inputType, matches: [] };
+    }
+    
+    switch (inputType) {
+        case inputTypes.RADIO:
+            // For radio buttons, provide the top match but show alternatives
+            return {
+                formattedResponse: matches[0].answer,
+                primaryChoice: matches[0].answer,
+                alternatives: matches.slice(1).map(m => m.answer),
+                confidence: matches[0].confidence,
+                inputType,
+                matches
+            };
+            
+        case inputTypes.DROPDOWN:
+            // For dropdown, list all options with primary selection
+            return {
+                formattedResponse: matches[0].answer,
+                dropdownOptions: matches.map(m => ({
+                    value: m.answer,
+                    label: m.answer,
+                    confidence: m.confidence,
+                    selected: m.rank === 1
+                })),
+                inputType,
+                matches
+            };
+            
+        case inputTypes.CHECKBOX:
+            // For checkboxes, user can select multiple relevant answers
+            return {
+                formattedResponse: matches.map(m => m.answer).join("; "),
+                checkboxOptions: matches.map(m => ({
+                    value: m.answer,
+                    label: m.answer,
+                    confidence: m.confidence,
+                    checked: m.relevanceLevel === 'high'
+                })),
+                inputType,
+                matches
+            };
+            
+        case inputTypes.TEXT:
+        default:
+            // For text input, combine or list multiple answers
+            if (combineAnswers && matches.length > 1) {
+                const combined = matches
+                    .filter(m => m.relevanceLevel !== 'low')
+                    .map(m => includeConfidence ? 
+                        `${m.answer} (${Math.round(m.confidence * 100)}% match)` : 
+                        m.answer
+                    )
+                    .join(" | ");
+                    
+                return {
+                    formattedResponse: combined.length > maxLength ? 
+                        combined.substring(0, maxLength) + "..." : 
+                        combined,
+                    inputType,
+                    matches,
+                    combinedAnswer: true
+                };
+            } else {
+                return {
+                    formattedResponse: matches[0].answer,
+                    alternatives: matches.slice(1),
+                    inputType,
+                    matches
+                };
+            }
+    }
+}
+
+// Input type definitions and their answer formats
+const inputTypes = {
+    TEXT: 'text',
+    RADIO: 'radio', 
+    DROPDOWN: 'dropdown',
+    CHECKBOX: 'checkbox'
+};
+
+// Dynamic response data storage
+let storedResponses = new Map(); // Store user responses for consistency
+let questionCategories = new Map(); // Store categorized questions
+let answerPatterns = new Map(); // Store answer patterns for reuse
+
+// Dynamic category detection based on keywords
+function detectQuestionCategory(question, propernouns, nouns, verbs) {
+    const lowerQ = question.toLowerCase();
+    const words = lowerQ.split(/\s+/);
+    
+    let category = 'general';
+    let confidence = 0;
+    
+    // Check for specific technologies/certifications in propernouns
+    const techWords = propernouns.filter(prop => 
+        words.some(word => prop.toLowerCase().includes(word) || word.includes(prop.toLowerCase()))
+    );
+    
+    // Check for experience/time-related words
+    const experienceWords = ['year', 'years', 'experience', 'month', 'months'];
+    const hasExperience = words.some(word => experienceWords.includes(word));
+    
+    // Check for yes/no question patterns
+    const yesNoWords = ['do', 'are', 'have', 'can', 'will', 'would', 'is'];
+    const isYesNo = words.some(word => yesNoWords.includes(word));
+    
+    if (techWords.length > 0) {
+        category = hasExperience ? `${techWords[0]}_experience` : `${techWords[0]}_knowledge`;
+        confidence = 0.8;
+    } else if (hasExperience) {
+        category = 'experience_general';
+        confidence = 0.6;
+    } else if (isYesNo) {
+        category = 'yes_no_question';
+        confidence = 0.5;
+    }
+    
+    return { category, confidence, detectedTerms: techWords };
+}
+
+// Generate dynamic response based on answer content and input type
+function generateDynamicResponse(answer, inputType, userShortResponce, actionWorkds) {
+    const lowerAnswer = answer.toLowerCase();
+    
+    switch (inputType) {
+        case 'radio':
+            // Extract key info for radio buttons
+            if (lowerAnswer.includes('yes')) return 'Yes';
+            if (lowerAnswer.includes('no')) return 'No';
+            if (lowerAnswer.match(/\d+\s*years?/)) {
+                const years = lowerAnswer.match(/(\d+)\s*years?/)[1];
+                return `${years} years`;
+            }
+            // Use userShortResponce for concise answers
+            const shortResponse = userShortResponce.find(resp => 
+                lowerAnswer.includes(resp.toLowerCase())
+            );
+            return shortResponse || answer.split('.')[0]; // First sentence
+            
+        case 'dropdown':
+            // More descriptive for dropdowns
+            if (lowerAnswer.match(/\d+\s*years?.*experience/)) {
+                const years = lowerAnswer.match(/(\d+)\s*years?/)[1];
+                const tech = extractTechnology(answer);
+                return tech ? `${years} years - ${tech}` : `${years} years experience`;
+            }
+            return answer.length > 50 ? answer.substring(0, 47) + '...' : answer;
+            
+        case 'checkbox':
+            // Boolean or action-based for checkboxes
+            const hasAction = actionWorkds.some(action => 
+                lowerAnswer.includes(action.toLowerCase())
+            );
+            if (hasAction) return true;
+            return lowerAnswer.includes('yes') || lowerAnswer.includes('have') || 
+                   lowerAnswer.includes('can') || !lowerAnswer.includes('no');
+            
+        default: // text
+            return answer;
+    }
+}
+
+// Extract technology/skill names from text
+function extractTechnology(text) {
+    const commonTech = ['javascript', 'python', 'java', 'react', 'node', 'aws', 'sql', 'css', 'html'];
+    const words = text.toLowerCase().split(/\s+/);
+    return commonTech.find(tech => words.some(word => word.includes(tech)));
+}
+
+// Enhanced matching function that handles input types dynamically
+function findAnswerWithInputType(question, answerArray, inputType, nouns, verbs, propernouns, subjects, userShortResponce, actionWorkds) {
+    // First find the best semantic match
+    const baseResult = findBestAnswer(question, answerArray, nouns, verbs, propernouns, subjects, userShortResponce, actionWorkds);
+    
+    // Generate dynamic response based on answer content and input type
+    const formattedAnswer = generateDynamicResponse(baseResult.bestAnswer, inputType, userShortResponce, actionWorkds);
+    
+    // Store this response for consistency across similar questions
+    const questionKey = question.toLowerCase().replace(/[^\w\s]/g, '').trim();
+    if (!storedResponses.has(questionKey)) {
+        storedResponses.set(questionKey, {
+            originalAnswer: baseResult.bestAnswer,
+            formattedResponses: { [inputType]: formattedAnswer },
+            category: baseResult.category
+        });
+    } else {
+        // Update with new input type response
+        const stored = storedResponses.get(questionKey);
+        stored.formattedResponses[inputType] = formattedAnswer;
+    }
+    
+    return {
+        ...baseResult,
+        inputType,
+        formattedAnswer,
+        originalAnswer: baseResult.bestAnswer,
+        isConsistent: checkResponseConsistency(questionKey, inputType, formattedAnswer)
+    };
+}
+
+// Check if response is consistent with previous responses to similar questions
+function checkResponseConsistency(questionKey, inputType, newResponse) {
+    const stored = storedResponses.get(questionKey);
+    if (!stored) return true;
+    
+    // Check if the core meaning is consistent across input types
+    const responses = Object.values(stored.formattedResponses);
+    if (responses.length === 0) return true;
+    
+    // Simple consistency check - look for contradictions
+    const hasYes = responses.some(r => String(r).toLowerCase().includes('yes') || r === true);
+    const hasNo = responses.some(r => String(r).toLowerCase().includes('no') || r === false);
+    
+    const newHasYes = String(newResponse).toLowerCase().includes('yes') || newResponse === true;
+    const newHasNo = String(newResponse).toLowerCase().includes('no') || newResponse === false;
+    
+    // Flag inconsistency if yes/no conflicts
+    return !(hasYes && newHasNo) && !(hasNo && newHasYes);
+}
+
+// Batch process with input types
+function processWithInputTypes(questionArray, answerArray, inputTypeArray, nouns, verbs, propernouns, subjects, userShortResponce, actionWorkds) {
+    return questionArray.map((question, index) => {
+        const inputType = inputTypeArray[index] || inputTypes.TEXT;
+        return findAnswerWithInputType(question, answerArray, inputType, nouns, verbs, propernouns, subjects, userShortResponce, actionWorkds);
+    });
+}
+
+// Data storage and retrieval functions
+function saveResponseData(filename = 'responses.json') {
+    // Convert Maps to serializable objects with full details
+    const serializedResponses = Array.from(storedResponses.entries()).map(([question, data]) => ({
+        question,
+        originalAnswer: data.originalAnswer,
+        formattedResponses: data.formattedResponses,
+        category: data.category || null
+    }));
+    
+    const data = {
+        storedResponses: serializedResponses,
+        questionCategories: Array.from(questionCategories.entries()),
+        answerPatterns: Array.from(answerPatterns.entries()),
+        totalQuestions: storedResponses.size,
+        timestamp: new Date().toISOString()
+    };
+    
+    // In a real implementation, you'd save to file
+    console.log(`\nData would be saved to ${filename}:`);
+    console.log(JSON.stringify(data, null, 2));
+    return data;
+}
+
+function loadResponseData(data) {
+    if (data.storedResponses) {
+        storedResponses = new Map(data.storedResponses);
+    }
+    if (data.questionCategories) {
+        questionCategories = new Map(data.questionCategories);
+    }
+    if (data.answerPatterns) {
+        answerPatterns = new Map(data.answerPatterns);
+    }
+    console.log('Data loaded successfully');
+}
+
+// Get all stored responses for analysis
+function getStoredResponses() {
+    return {
+        totalQuestions: storedResponses.size,
+        responses: Array.from(storedResponses.entries()),
+        categories: Array.from(questionCategories.entries())
+    };
+}
+
+// Find similar questions that have been answered before
+function findSimilarQuestions(newQuestion, threshold = 0.6) {
+    const similar = [];
+    
+    for (const [storedQ, data] of storedResponses.entries()) {
+        const similarity = calculateTextSimilarity(newQuestion.toLowerCase(), storedQ);
+        if (similarity > threshold) {
+            similar.push({
+                question: storedQ,
+                similarity,
+                storedData: data
+            });
+        }
+    }
+    
+    return similar.sort((a, b) => b.similarity - a.similarity);
+}
+
+/**
+ * Jaccard Similarity Index
+ * Formula: J(A,B) = |A ∩ B| / |A ∪ B|
+ * Range: [0,1] where 1 = identical, 0 = no similarity
+ */
+function calculateTextSimilarity(text1, text2) {
+    const words1 = new Set(text1.split(/\s+/));
+    const words2 = new Set(text2.split(/\s+/));
+    
+    const intersection = new Set([...words1].filter(x => words2.has(x)));
+    const union = new Set([...words1, ...words2]);
+    
+    return intersection.size / union.size; // |A ∩ B| / |A ∪ B|
+}
+
+
+// Comprehensive test data organized by categories
+const testQuestions = [
+    // 🚛 Trucking / License Questions
+    "Do you have a valid Class A license?",
+    "Are you currently licensed to drive commercial vehicles with Class A?",
+    "How many years have you been driving with a Class A CDL?",
+    
+    // 💻 Tech Experience
+    "How many years of JavaScript experience do you have?",
+    "Have you worked professionally with JavaScript, and if so for how long?",
+    "Rate your JavaScript proficiency and years of use.",
+    
+    // 🗣 Certification & Credentials
+    "Do you currently hold a CompTIA Security+ certification?",
+    "Have you obtained your AWS Solutions Architect Associate certification?",
+    "Which certifications do you currently hold in IT security?",
+    
+    // 🕒 Availability
+    "Are you available to work full-time?",
+    "Would you be open to part-time or contract work?",
+    "How soon can you start working if hired?",
+    
+    // 📍 Location / Relocation
+    "Are you authorized to work in the United States?",
+    "Do you require visa sponsorship now or in the future?",
+    "Would you be willing to relocate for this role?",
+    
+    // 🎓 Education / Training
+    "Do you have a high school diploma or GED?",
+    "What is your highest level of education completed?",
+    "Have you completed any technical bootcamps or training programs?",
+    
+    // ⚙️ Skills (general)
+    "How many years of experience do you have with Python?",
+    "Do you have backend development experience with Node.js?",
+    "Have you worked with cloud platforms like AWS or Azure?",
+    
+    // 🧰 Soft Skills / Extras
+    "Do you have leadership or management experience?",
+    "Are you comfortable training or mentoring junior staff?",
+    "Do you have experience working in agile or scrum environments?",
+    
+    // 🏗 Extra Variations (to test paraphrasing)
+    "Have you worked as a professional truck driver with a CDL?",
+    "Are you certified or licensed to operate commercial trucks?",
+    "How many years of professional coding experience do you have overall?",
+    "Do you currently hold any active technical certifications?",
+    "What's your availability for starting a new position?",
+    "Can you commit to 40 hours per week?"
+];
+
+const testAnswers = [
+    // 🚛 Trucking / License Answers
+    "Yes, I have a Class A license.",
+    "Yes, I hold a Class A license.",
+    "3 years of Class A CDL experience.",
+    
+    // 💻 Tech Experience Answers
+    "2 years of JavaScript experience.",
+    "2 years of professional JavaScript experience.",
+    "Intermediate, 2 years of experience.",
+    
+    // 🗣 Certification & Credentials Answers
+    "Yes, I am Security+ certified.",
+    "Yes, AWS Solutions Architect Associate certified.",
+    "CompTIA Security+, AWS Solutions Architect Associate.",
+    
+    // 🕒 Availability Answers
+    "Yes, available full-time.",
+    "Yes, open to part-time or contract roles.",
+    "Available to start immediately.",
+    
+    // 📍 Location / Relocation Answers
+    "Yes, authorized to work in the U.S.",
+    "No, I do not require sponsorship.",
+    "Yes, willing to relocate.",
+    
+    // 🎓 Education / Training Answers
+    "Yes, I have a high school diploma.",
+    "Completed Software Engineering program (equivalent to college-level training).",
+    "Yes, completed Per Scholas Software Engineering program.",
+    
+    // ⚙️ Skills (general) Answers
+    "3 years of Python experience.",
+    "Yes, backend experience with Node.js.",
+    "Yes, AWS experience.",
+    
+    // 🧰 Soft Skills / Extras Answers
+    "Yes, led a small development team.",
+    "Yes, experienced in mentoring teammates.",
+    "Yes, experienced with Agile/Scrum.",
+    
+    // 🏗 Extra Variations Answers
+    "Yes, 3 years Class A CDL experience.",
+    "Yes, licensed Class A CDL.",
+    "4 years of coding experience.",
+    "Yes, Security+ and AWS Solutions Architect Associate.",
+    "Available immediately.",
+    "Yes, full-time availability."
+];
+
+// Test the system
+console.log("=== Question-Answer Matching System Test ===\n");
+
+testQuestions.forEach((question, index) => {
+    const result = findBestAnswer(question, testAnswers, nouns, verbs, propernouns, subjects, userShortResponce, actionWorkds);
+    
+    console.log(`Question ${index + 1}: ${question}`);
+    console.log(`Best Answer: ${result.bestAnswer}`);
+    console.log(`Score: ${result.score}`);
+    console.log(`Confidence: ${(result.confidence * 100).toFixed(1)}%`);
+    console.log(`Matches: ${JSON.stringify(result.details, null, 2)}`);
+    console.log("---");
+});
+
+// Batch processing test
+console.log("\n=== Batch Processing Test ===");
+const batchResults = processQuestionAnswerPairs(testQuestions.slice(0, 5), testAnswers, nouns, verbs, propernouns, subjects, userShortResponce, actionWorkds);
+batchResults.forEach((result, index) => {
+    console.log(`${index + 1}. Q: "${result.question}"`);
+    console.log(`   A: "${result.bestAnswer}" (Score: ${result.score})`);
+});
+
+// Input type consistency test
+console.log("\n=== Input Type Consistency Test ===");
+const testQuestion = "Do you have a valid Class A license?";
+const inputTypesTest = [inputTypes.TEXT, inputTypes.RADIO, inputTypes.DROPDOWN, inputTypes.CHECKBOX];
+
+inputTypesTest.forEach(type => {
+    const result = findAnswerWithInputType(testQuestion, testAnswers, type, nouns, verbs, propernouns, subjects, userShortResponce, actionWorkds);
+    console.log(`${type.toUpperCase()}: ${result.formattedAnswer}`);
+});
+
+// Batch test with different input types
+console.log("\n=== Mixed Input Types Test ===");
+const mixedInputTypes = [inputTypes.TEXT, inputTypes.RADIO, inputTypes.DROPDOWN, inputTypes.TEXT, inputTypes.RADIO];
+const mixedResults = processWithInputTypes(testQuestions.slice(0, 5), testAnswers, mixedInputTypes, nouns, verbs, propernouns, subjects, userShortResponce, actionWorkds);
+
+mixedResults.forEach((result, index) => {
+    console.log(`${index + 1}. [${result.inputType.toUpperCase()}] Q: "${result.question}"`);
+    console.log(`   Formatted A: "${result.formattedAnswer}"`);
+    console.log(`   Original A: "${result.originalAnswer}"`);
+    console.log(`   Category: ${result.responseCategory || 'general'}`);
+});
+
+// Data Storage Test
+console.log("\n=== Data Storage Test ===");
+const newQuestion = "Do you currently have AWS certification?";
+const newResult = findAnswerWithInputType(newQuestion, testAnswers, 'radio', nouns, verbs, propernouns, subjects, userShortResponce, actionWorkds);
+console.log(`New Question: ${newQuestion}`);
+console.log(`Answer: ${newResult.formattedAnswer}`);
+console.log(`Consistent: ${newResult.isConsistent}`);
+
+// Show stored data
+console.log("\n=== Stored Response Data ===");
+const storedData = getStoredResponses();
+console.log(`Total stored questions: ${storedData.totalQuestions}`);
+storedData.responses.slice(0, 5).forEach(([key, data], index) => {
+    console.log(`\n${index + 1}. Question: "${key}"`);
+    console.log(`   Original Answer: "${data.originalAnswer}"`);
+    console.log(`   Formatted Responses:`);
+    Object.entries(data.formattedResponses).forEach(([inputType, response]) => {
+        console.log(`     ${inputType}: "${response}"`);
+    });
+    if (data.category) {
+        console.log(`   Category: ${data.category.category} (confidence: ${(data.category.confidence * 100).toFixed(1)}%)`);
+    }
+});
+
+// Similar questions test
+console.log("\n=== Similar Questions Test ===");
+const similarQuestions = findSimilarQuestions("Do you possess a Class A driving license?", 0.4);
+console.log("Similar questions found:", similarQuestions.length);
+similarQuestions.slice(0, 2).forEach((similar, index) => {
+    console.log(`${index + 1}. "${similar.question}" (similarity: ${(similar.similarity * 100).toFixed(1)}%)`);
+});
+
+// Save data demonstration
+console.log("\n=== Save Data Demo ===");
+const savedData = saveResponseData('test_responses.json');
+console.log(`Saved ${savedData.storedResponses.length} responses`);
+
+// Single test case
+console.log("\n=== Single Test Case ===");
+const singleResult = findBestAnswer(
+    "Do you have a valid Class A license", 
+    testAnswers, 
+    nouns, verbs, propernouns, subjects, userShortResponce, actionWorkds
+);
+console.log("Result:", singleResult);
+
+const jobqustions = findAnswerWithInputType(newQuestion, testAnswers, 'radio', nouns, verbs, propernouns, subjects, userShortResponce, actionWorkds);
+
+// ===================================================
+// MANY-TO-MANY RELATIONSHIP DEMONSTRATIONS
+// ===================================================
+
+console.log("\n" + "=".repeat(80));
+console.log("🔄 MANY-TO-MANY ALGORITHM DEMONSTRATIONS");
+console.log("=".repeat(80));
+
+// Test 1: One Question → Multiple Relevant Answers
+console.log("\n📋 TEST 1: Finding Multiple Answers for One Question");
+console.log("─".repeat(60));
+
+const questionWithMultipleAnswers = "What qualifications do you have?";
+console.log(`Question: "${questionWithMultipleAnswers}"`);
+
+const multipleAnswers = findAllRelevantAnswers(
+    questionWithMultipleAnswers, 
+    testAnswers, 
+    nouns, verbs, propernouns, subjects, userShortResponce, actionWorkds,
+    3,  // minimum threshold
+    6   // max results
+);
+
+console.log(`\nFound ${multipleAnswers.length} relevant answers:`);
+multipleAnswers.forEach((match, i) => {
+    console.log(`  ${i+1}. [Score: ${match.score}, ${match.relevanceLevel.toUpperCase()}] ${match.answer}`);
+    console.log(`     Confidence: ${Math.round(match.confidence * 100)}%`);
+});
+
+// Test 2: Format Multiple Answers for Different Input Types
+console.log("\n🎛️ TEST 2: Formatting for Different Input Types");
+console.log("─".repeat(60));
+
+const inputTypesToTest = ['text', 'radio', 'dropdown', 'checkbox'];
+inputTypesToTest.forEach(inputType => {
+    const formatted = formatMultipleAnswerResponse(multipleAnswers, inputType);
+    console.log(`\n${inputType.toUpperCase()} Format:`);
+    console.log(`  Primary Response: ${formatted.formattedResponse}`);
+    
+    if (formatted.alternatives) {
+        console.log(`  Alternatives: ${formatted.alternatives.length} options`);
+    }
+    if (formatted.dropdownOptions) {
+        console.log(`  Dropdown Options: ${formatted.dropdownOptions.length} choices`);
+    }
+    if (formatted.checkboxOptions) {
+        console.log(`  Checkbox Options: ${formatted.checkboxOptions.length} selectable`);
+    }
+});
+
+// Test 3: Comprehensive Many-to-Many Processing
+console.log("\n🔄 TEST 3: Full Many-to-Many Processing");
+console.log("─".repeat(60));
+
+const questionsForManyToMany = [
+    "Do you have truck driving experience?",
+    "What certifications do you hold?", 
+    "Are you available for work?",
+    "What's your education background?",
+    "Where are you located?"
+];
+
+
+console.log(`\nProcessed ${manyToManyResults.summary.totalQuestions} questions:`);
+console.log(`✅ Questions with matches: ${manyToManyResults.summary.questionsWithMatches}`);
+console.log(`🔢 Questions with multiple matches: ${manyToManyResults.summary.questionsWithMultipleMatches}`);
+console.log(`📊 Average matches per question: ${manyToManyResults.summary.averageMatchesPerQuestion.toFixed(2)}`);
+
+manyToManyResults.questionToAnswers.forEach(qa => {
+    if (qa.matches.length > 0) {
+        console.log(`\nQ: "${qa.question}"`);
+        console.log(`   → ${qa.matches.length} answer(s):`);
+        qa.matches.forEach(match => {
+            console.log(`     • ${match.answer} (${Math.round(match.confidence * 100)}%)`);
+        });
+    }
+});
+
+// Test 4: Reverse Lookup (Answer → Questions)
+console.log("\n🔍 TEST 4: Reverse Lookup - Answer to Questions");
+console.log("─".repeat(60));
+
+if (manyToManyResults.answerToQuestions) {
+    console.log(`\nProcessed ${manyToManyResults.summary.totalAnswers} answers:`);
+    console.log(`✅ Answers with matches: ${manyToManyResults.summary.answersWithMatches}`);
+    console.log(`🔢 Answers with multiple matches: ${manyToManyResults.summary.answersWithMultipleMatches}`);
+    
+    manyToManyResults.answerToQuestions
+        .filter(aq => aq.matchingQuestions.length > 1)  // Only show answers with multiple question matches
+        .slice(0, 3)  // Show top 3 examples
+        .forEach(aq => {
+            console.log(`\nA: "${aq.answer}"`);
+            console.log(`   ← ${aq.matchingQuestions.length} question(s) lead to this:`);
+            aq.matchingQuestions.forEach(match => {
+                console.log(`     • "${match.question}" (${Math.round(match.confidence * 100)}%)`);
+            });
+        });
+}
+
+// Test 5: Edge Cases and Performance
+console.log("\n⚡ TEST 5: Edge Cases and Performance Analysis");
+console.log("─".repeat(60));
+
+const edgeQuestions = [
+    "Tell me everything about trucking",  // Broad question
+    "CDL",  // Very short question
+    "Do you have experience with JavaScript programming and machine learning?",  // Outside domain
+    ""  // Empty question
+];
+
+console.log("\nEdge case analysis:");
+edgeQuestions.forEach(question => {
+    if (question === "") {
+        console.log(`Empty question → Skipped`);
+        return;
+    }
+    
+    const results = findAllRelevantAnswers(
+        question, 
+        testAnswers, 
+        nouns, verbs, propernouns, subjects, userShortResponce, actionWorkds,
+        2  // Lower threshold for edge cases
+    );
+    
+    console.log(`"${question}"`);
+    console.log(`  → Found ${results.length} matches (threshold ≥ 2)`);
+    if (results.length > 0) {
+        const topMatch = results[0];
+        console.log(`  → Best: "${topMatch.answer}" (score: ${topMatch.score})`);
+    }
+});
+
+// Test 6: Save Many-to-Many Results
+console.log("\n💾 TEST 6: Saving Many-to-Many Data");
+console.log("─".repeat(60));
+
+console.log("\nSaving comprehensive many-to-many results...");
+manyToManyResults.questionToAnswers.slice(0, 3).forEach(qa => {
+    if (qa.matches.length > 0) {
+        const response = {
+            question: qa.question,
+            multipleAnswers: qa.matches,
+            timestamp: new Date().toISOString(),
+            algorithmType: "many-to-many-weighted-similarity"
+        };
+        
+        const serialized = {
+            question: response.question,
+            answerCount: response.multipleAnswers.length,
+            answers: response.multipleAnswers.map(m => ({
+                text: m.answer,
+                score: m.score,
+                confidence: Math.round(m.confidence * 100),
+                relevance: m.relevanceLevel,
+                rank: m.rank
+            })),
+            metadata: {
+                timestamp: response.timestamp,
+                algorithm: response.algorithmType
+            }
+        };
+        
+        console.log(`\n📄 Saved Response:`, JSON.stringify(serialized, null, 2));
+    }
+});
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
