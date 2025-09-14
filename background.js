@@ -5,17 +5,116 @@ let failedJobs = [];
 let retryQueue = [];
 let currentJob = null;
 let processing = false;
+let activeJobTabId = null; // Track the current job tab
 
-const JOB_TIMEOUT = 500000; // 90 seconds per job (more time for complex applications)
+const JOB_TIMEOUT = 90000; // 90 seconds per job (reduced from 500 seconds)
 const JOB_THROTTLE = 3000; // 3 seconds between jobs (prevent rate limiting)
 const MAX_RETRIES = 5; // Maximum retry attempts per job
+const MAX_CONCURRENT_TABS = 1; // Only allow 1 job tab at a time
+const MAX_TOTAL_TABS = 10; // Emergency brake - never have more than 10 tabs total
 
 // Load job queue from storage on startup
 chrome.storage.local.get(['jobQueue', 'failedJobs', 'retryQueue'], (result) => {
   if (result.jobQueue) jobQueue = result.jobQueue;
   if (result.failedJobs) failedJobs = result.failedJobs;
   if (result.retryQueue) retryQueue = result.retryQueue;
+  
+  // CRASH PREVENTION: Limit queue sizes to prevent memory issues
+  const MAX_QUEUE_SIZE = 50;
+  if (jobQueue.length > MAX_QUEUE_SIZE) {
+    console.warn(`⚠️ Job queue too large (${jobQueue.length}), truncating to ${MAX_QUEUE_SIZE}`);
+    jobQueue = jobQueue.slice(0, MAX_QUEUE_SIZE);
+  }
+  
+  if (retryQueue.length > MAX_QUEUE_SIZE) {
+    console.warn(`⚠️ Retry queue too large (${retryQueue.length}), truncating to ${MAX_QUEUE_SIZE}`);
+    retryQueue = retryQueue.slice(0, MAX_QUEUE_SIZE);
+  }
+  
   logQueueStatus();
+});
+
+// Global error handler to prevent crashes
+chrome.runtime.onStartup.addListener(() => {
+  console.log('🔄 Extension startup - cleaning up any leftover tabs');
+  preventCrash();
+});
+
+// Track main Indeed tab and stop everything when it closes
+let mainIndeedTabId = null;
+
+// Listen for tab removal (when user closes tabs)
+chrome.tabs.onRemoved.addListener((tabId, removeInfo) => {
+  console.log(`🗂️ Tab ${tabId} was closed`);
+  
+  // If the main Indeed tab is closed, STOP EVERYTHING
+  if (tabId === mainIndeedTabId) {
+    console.log('🛑 MAIN INDEED TAB CLOSED - STOPPING ALL AUTOMATION');
+    emergencyStopAllAutomation();
+    mainIndeedTabId = null;
+  }
+  
+  // If any job tab is closed, clean up
+  if (tabId === activeJobTabId) {
+    console.log('🗂️ Active job tab was closed');
+    activeJobTabId = null;
+  }
+});
+
+// Listen for tab updates to detect navigation away from Indeed
+chrome.tabs.onUpdated.addListener((tabId, changeInfo, tab) => {
+  if (tabId === mainIndeedTabId && changeInfo.url) {
+    // Check if user navigated away from Indeed
+    if (!changeInfo.url.includes('indeed.com')) {
+      console.log('🛑 NAVIGATED AWAY FROM INDEED - STOPPING ALL AUTOMATION');
+      emergencyStopAllAutomation();
+      mainIndeedTabId = null;
+    }
+  }
+});
+
+// Emergency stop function - completely halts all automation
+function emergencyStopAllAutomation() {
+  console.log('🚨 EMERGENCY STOP - CLEARING EVERYTHING');
+  
+  // Stop all processing
+  processing = false;
+  currentJob = null;
+  
+  // Clear ALL queues
+  jobQueue = [];
+  retryQueue = [];
+  failedJobs = [];
+  
+  // Save empty queues to storage
+  chrome.storage.local.set({
+    jobQueue: [],
+    retryQueue: [],
+    failedJobs: []
+  });
+  
+  // Close any active job tabs
+  if (activeJobTabId) {
+    chrome.tabs.remove(activeJobTabId).catch(() => {});
+    activeJobTabId = null;
+  }
+  
+  console.log('✅ All automation stopped and queues cleared');
+}
+
+// Emergency stop mechanism
+chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
+  if (message.action === 'emergencyStop') {
+    console.log('🛑 EMERGENCY STOP ACTIVATED');
+    processing = false;
+    jobQueue = [];
+    retryQueue = [];
+    currentJob = null;
+    safelyCloseJobTab();
+    clearQueueState();
+    sendResponse({ status: 'stopped' });
+    return true;
+  }
 });
 // TODO add this to an html  when done
 function saveQueueState() {
@@ -100,13 +199,27 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   // Handle job queue from Indeed page
   if (message.action === "queueJobs" && message.jobs && Array.isArray(message.jobs)) {
     console.log("Received jobs to queue:", message.jobs.length);
+    
+    // Track the main Indeed tab - this is where jobs came from
+    if (sender.tab && sender.tab.id) {
+      mainIndeedTabId = sender.tab.id;
+      console.log(`📍 Main Indeed tab set to: ${mainIndeedTabId}`);
+    }
+    
+    // CLEAR existing queues first - only process jobs from THIS page
+    console.log("🧹 Clearing existing queues - only processing current page jobs");
+    jobQueue = [];
+    retryQueue = [];
+    failedJobs = [];
+    
     // Add jobs to queue with pending status and retry count
-    jobQueue = jobQueue.concat(message.jobs.map(job => ({ 
+    jobQueue = message.jobs.map(job => ({ 
       ...job, 
       status: "pending",
       retryCount: 0,
       originalAttemptTime: Date.now()
-    })));
+    }));
+    
     sendResponse({ status: "queued", queueLength: jobQueue.length });
     logQueueStatus();
     saveQueueState(); // Save state after adding jobs
@@ -142,6 +255,59 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   return true;
 });
 /**
+ * Emergency crash prevention - Close excess tabs
+ */
+async function preventCrash() {
+  try {
+    const tabs = await chrome.tabs.query({});
+    
+    if (tabs.length > MAX_TOTAL_TABS) {
+      console.warn(`🚨 CRASH PREVENTION: Too many tabs (${tabs.length}), closing excess tabs`);
+      
+      // Close tabs that aren't the active job tab or important system tabs
+      for (let i = 0; i < tabs.length; i++) {
+        const tab = tabs[i];
+        
+        // Don't close active tab, new tab page, or current job tab
+        if (tab.id !== activeJobTabId && 
+            !tab.active && 
+            !tab.url.includes('chrome://') && 
+            !tab.url.includes('chrome-extension://')) {
+          
+          try {
+            await chrome.tabs.remove(tab.id);
+            console.log(`🗑️ Closed excess tab: ${tab.url}`);
+            
+            // Stop after closing enough tabs
+            if (tabs.length - i <= MAX_TOTAL_TABS) break;
+          } catch (error) {
+            console.warn('Failed to close tab:', error.message);
+          }
+        }
+      }
+    }
+  } catch (error) {
+    console.error('Crash prevention failed:', error);
+  }
+}
+
+/**
+ * Safely close the current job tab
+ */
+async function safelyCloseJobTab() {
+  if (activeJobTabId) {
+    try {
+      await chrome.tabs.remove(activeJobTabId);
+      console.log(`✅ Closed job tab: ${activeJobTabId}`);
+    } catch (error) {
+      console.log(`Tab ${activeJobTabId} already closed or invalid`);
+    } finally {
+      activeJobTabId = null;
+    }
+  }
+}
+
+/**
  * Add job to retry queue if it hasn't exceeded max retries
  */
 function addToRetryQueue(job, reason) {
@@ -164,7 +330,21 @@ function addToRetryQueue(job, reason) {
 }
 
 //  add retry logic for failed jobs 
-function processNextJob() {
+async function processNextJob() {
+  // CRASH PREVENTION: Check tab count before processing
+  await preventCrash();
+  
+  // SAFETY CHECK: Don't process if already processing or have active job tab
+  if (processing) {
+    console.log("⚠️ Already processing a job, skipping...");
+    return;
+  }
+  
+  if (activeJobTabId) {
+    console.log("⚠️ Job tab still active, waiting for completion...");
+    return;
+  }
+  
   // First, check if there are jobs in retry queue (prioritize retries)
   if (retryQueue.length > 0 && jobQueue.length === 0) {
     console.log(`🔄 Processing ${retryQueue.length} jobs from retry queue...`);
@@ -176,6 +356,9 @@ function processNextJob() {
   if (jobQueue.length === 0) {
     processing = false;
     console.log("All jobs processed.");
+    
+    // Ensure no job tab is left open
+    await safelyCloseJobTab();
     
     if (retryQueue.length > 0) {
       console.log(`🔄 ${retryQueue.length} jobs in retry queue will be processed next cycle.`);
@@ -238,12 +421,20 @@ function processNextJob() {
   currentJob = jobQueue.shift();
   currentJob.status = "processing";
   logQueueStatus();
-  console.log("Processing job:", currentJob);
+  console.log(`🚀 Processing job ${jobQueue.length + 1}: ${currentJob.jobTitle}`);
 
-  chrome.tabs.create({ url: currentJob.jobLink, active: false }, (tab) => {
+  // SAFETY: Close any existing job tab before creating new one
+  safelyCloseJobTab().then(() => {
+    createJobTab();
+  });
+}
+
+function createJobTab() {
+  chrome.tabs.create({ url: currentJob.jobLink, active: false }, async (tab) => {
     if (chrome.runtime.lastError) {
       console.error("Failed to create tab:", chrome.runtime.lastError.message);
       currentJob.status = "fail_tab_creation";
+      processing = false; // Reset processing flag
       
       const shouldRetry = addToRetryQueue(currentJob, "fail_tab_creation");
       if (!shouldRetry) {
@@ -255,14 +446,17 @@ function processNextJob() {
     }
 
     const tabId = tab.id;
+    activeJobTabId = tabId; // Track this as our active job tab
+    console.log(`📋 Created job tab ${tabId} for: ${currentJob.jobTitle}`);
     let tabClosed = false;
     let jobCompleted = false;
 
     // Increased timeout for complex applications
-    let timeoutId = setTimeout(() => {
+    let timeoutId = setTimeout(async () => {
       if (!jobCompleted) {
-        console.log("Job timed out after 90 seconds:", currentJob);
+        console.log(`⏰ Job timed out after ${JOB_TIMEOUT/1000} seconds:`, currentJob.jobTitle);
         jobCompleted = true;
+        processing = false; // Reset processing flag
         currentJob.status = "fail_timeout";
         
         const shouldRetry = addToRetryQueue(currentJob, "fail_timeout");
@@ -272,25 +466,20 @@ function processNextJob() {
         
         logQueueStatus();
         
-        // Safely close tab
-        if (!tabClosed) {
-          chrome.tabs.remove(tabId, () => {
-            if (chrome.runtime.lastError) {
-              console.log("Tab already closed or invalid:", chrome.runtime.lastError.message);
-            }
-            tabClosed = true;
-          });
-        }
+        // Safely close job tab
+        await safelyCloseJobTab();
+        tabClosed = true;
         
         setTimeout(processNextJob, JOB_THROTTLE);
       }
-    }, JOB_TIMEOUT); // Use constant timeout
+    }, JOB_TIMEOUT);
 
     // Listen for job result from content.js
-    const jobResultListener = (msg, sender, resp) => {
+    const jobResultListener = async (msg, sender, resp) => {
       if (msg.action === "jobResult" && msg.jobId === currentJob.jobId && !jobCompleted) {
         console.log("📋 Received job result:", msg.result, "for job:", currentJob.jobTitle);
         jobCompleted = true;
+        processing = false; // Reset processing flag
         clearTimeout(timeoutId);
         
         currentJob.status = msg.result;
@@ -321,15 +510,9 @@ function processNextJob() {
         }
         logQueueStatus();
         
-        // Safely close tab
-        if (!tabClosed) {
-          chrome.tabs.remove(tabId, () => {
-            if (chrome.runtime.lastError) {
-              console.log("Tab already closed:", chrome.runtime.lastError.message);
-            }
-            tabClosed = true;
-          });
-        }
+        // Safely close job tab
+        await safelyCloseJobTab();
+        tabClosed = true;
         
         chrome.runtime.onMessage.removeListener(jobResultListener);
         setTimeout(processNextJob, JOB_THROTTLE);
@@ -477,12 +660,18 @@ function processNextJob() {
     // Handle tab being closed externally
     const tabRemovedListener = (removedTabId) => {
       if (removedTabId === tabId && !jobCompleted) {
-        console.log("🚪 Tab was closed externally");
+        console.log("🚪 Job tab was closed externally");
         jobCompleted = true;
         tabClosed = true;
+        processing = false; // Reset processing flag
+        activeJobTabId = null; // Clear active job tab
         clearTimeout(timeoutId);
-        currentJob.status = "fail_tab_closed";
-        failedJobs.push(currentJob);
+        
+        const shouldRetry = addToRetryQueue(currentJob, "fail_tab_closed");
+        if (!shouldRetry) {
+          console.log("❌ Job permanently failed due to tab closure:", currentJob.jobTitle);
+        }
+        
         chrome.runtime.onMessage.removeListener(jobResultListener);
         chrome.tabs.onRemoved.removeListener(tabRemovedListener);
         setTimeout(processNextJob, JOB_THROTTLE);

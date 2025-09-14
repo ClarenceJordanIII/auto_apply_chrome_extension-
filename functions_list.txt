@@ -1,0 +1,105 @@
+129:async function loadQuestionsConfig() {
+172:async function saveLearnedPatternsToConfig(patterns) {
+206:async function loadLearnedPatternsFromConfig() {
+240:function findPatternMatch(patterns, labelText, excludeKeywords = []) {
+274:async function waitForElement(selector, timeout = 10000, checkInterval = 100) {
+315:async function waitForAnyElement(selectors, timeout = 10000) {
+358:async function waitForClickableElement(selector, timeout = 10000) {
+406:async function waitForElementByText(textOptions, timeout = 10000) {
+449:function debugClickableElements() {
+468:function showExtensionReloadNotice() {
+1640:function indeedMain() {
+1819:function autoScrollToBottom(callback) {
+1855:function isExtensionContextValid() {
+1885:async function scrollDownUp() {
+1928:async function fillContactInfo(job) {
+2201:function showCaptchaModal() {
+2232:function detectCloudflareCaptcha() {
+2261:async function completeApplicationWorkflow() {
+2319:function safePromise(fn, stepName = "") {
+2333:function fillContactFields() {
+2449:function fillScreenerQuestions() {
+2475:function fillResumeSection() {
+2488:function fillSupportingDocuments() {
+2501:function acceptLegalDisclaimer() {
+2513:function fillContactFieldsAsync() {
+2517:function fillScreenerQuestionsAsync() {
+2521:function fillResumeSectionAsync() {
+2525:function fillSupportingDocumentsAsync() {
+2529:function acceptLegalDisclaimerAsync() {
+2533:function clickButtonAsync(selector, regex, stepName) {
+2554:async function clickRelevantButton(keywords, stepName) {
+2591:function waitForElements(selector, timeout = 10000) {
+2616:async function scrapePageElements() {
+2776:async function processScrapedElementsV2(pageData) {
+2883:async function processScrapedElements(pageData) {
+2969:function classifyQuestionType(label) {
+3038:function getQuestionPriority(questionType) {
+3057:function classifyQuestion(label) {
+3064:async function handleWorkAuthorization(question, pageData) {
+3090:async function handleCommuteQuestion(question, pageData) {
+3115:async function handleExperienceQuestion(question, pageData) {
+3136:async function handleDateInput(question, pageData) {
+3161:async function handleSalaryQuestion(question, pageData) {
+3178:async function handleReasonApplying(question, pageData) {
+3195:async function handleSkillsQuestion(question, pageData) {
+3214:async function handleEducationQuestion(question, pageData) {
+3242:async function handleGenericQuestion(question, pageData) {
+3283:function waitForElementInContainer(container, selector, timeout = 3000) {
+3302:async function fillQuestionByType(container, labelText) {
+3456:async function fillInputSafely(input, value, labelText) {
+3484:async function getTextInputValue(labelText) {
+3506:async function getTextareaValue(labelText) {
+3528:async function getNumberInputValue(labelText) {
+3573:function getRadioValue(labelText, radioButtons) {
+3683:function getSelectValue(labelText, selectElement) {
+3712:function getRadioValue(labelText, radioButtons) {
+3741:function getCheckboxValue(labelText) {
+3796:function getSmartDateValue(labelText, inputType = 'text') {
+3838:function formatDateForInput(date, inputType) {
+3856:function getDateValue(labelText) {
+3863:function getExperienceValue(labelText) {
+3877:function getSalaryValue(labelText) {
+3893:function getReasonText(labelText) {
+3905:function getSkillsText(labelText) {
+3921:function getEducationValue(labelText) {
+3934:function getEducationText(labelText) {
+3953:async function clickRadioButton(radioElement) {
+3990:async function runDynamicApplicationWorkflow() {
+4049:async function clickApplyButton() {
+4120:async function runUnlimitedWorkflowLoop() {
+4204:async function processCurrentPage() {
+4275:async function proceedToNextPage() {
+4307:async function findContinueButton() {
+4344:async function findSubmitButton() {
+4386:async function performSuccessVerification() {
+4534:async function isSuccessPage() {
+4542:async function checkApplicationSuccess() {
+4594:async function hasContactInfo() {
+4598:async function hasEmployerQuestions() {
+4602:async function hasResumeSelection() {
+4606:async function hasDocumentUploads() {
+4610:async function hasLegalDisclaimer() {
+4615:async function selectResume() {
+4626:async function fillEmployerQuestions() {
+4663:async function handleDocumentUploads() {
+4669:async function acceptLegalDisclaimer() {
+4869:function normalizeText(text) {
+4894:function calculateScore(qustion, answer, nouns, verbs, propernouns, subjects, userShortResponce, actionWorkds) {
+4978:function findBestAnswer(question, answerArray, nouns, verbs, propernouns, subjects, userShortResponce, actionWorkds) {
+5014:function findAllRelevantAnswers(question, answerArray, nouns, verbs, propernouns, subjects, userShortResponce, actionWorkds, minThreshold = 5, maxResults = 5) {
+5054:function findQuestionsForAnswer(targetAnswer, questionArray, nouns, verbs, propernouns, subjects, userShortResponce, actionWorkds, minThreshold = 5) {
+5075:function processQuestionAnswerPairs(questionArray, answerArray, nouns, verbs, propernouns, subjects, userShortResponce, actionWorkds) {
+5092:function processMultipleAnswers(questionArray, answerArray, nouns, verbs, propernouns, subjects, userShortResponce, actionWorkds, options = {}) {
+5147:function formatMultipleAnswerResponse(matches, inputType, options = {}) {
+5243:function detectQuestionCategory(question, propernouns, nouns, verbs) {
+5278:function generateDynamicResponse(answer, inputType, userShortResponce, actionWorkds) {
+5320:function extractTechnology(text) {
+5327:function findAnswerWithInputType(question, answerArray, inputType, nouns, verbs, propernouns, subjects, userShortResponce, actionWorkds) {
+5358:function checkResponseConsistency(questionKey, inputType, newResponse) {
+5378:function processWithInputTypes(questionArray, answerArray, inputTypeArray, nouns, verbs, propernouns, subjects, userShortResponce, actionWorkds) {
+5386:function saveResponseData(filename = 'responses.json') {
+5409:function loadResponseData(data) {
+5423:function getStoredResponses() {
+5432:function findSimilarQuestions(newQuestion, threshold = 0.6) {
+5454:function calculateTextSimilarity(text1, text2) {

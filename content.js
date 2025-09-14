@@ -1,7 +1,33 @@
 // ═══════════════════════════════════════════════════════════════════════════
 // 🚫 PREVENT BACK/FORWARD CACHE - Keep page active to prevent caching
 // ═══════════════════════════════════════════════════════════════════════════
-console.log("🚀 Content script loaded - preventing cache...");
+
+// ⚠️ DOMAIN CHECK - Only run on Indeed websites
+// Use var instead of const to allow redeclaration on extension reload
+if (typeof ALLOWED_DOMAINS === 'undefined') {
+  var ALLOWED_DOMAINS = [
+    'indeed.com',
+    'www.indeed.com',
+    'indeed.ca', 
+    'www.indeed.ca',
+    'indeed.co.uk',
+    'www.indeed.co.uk'
+  ];
+}
+
+// Prevent redeclaration errors on extension reload
+if (typeof currentDomain === 'undefined') {
+  var currentDomain = window.location.hostname.toLowerCase();
+}
+if (typeof isIndeedSite === 'undefined') {
+  var isIndeedSite = ALLOWED_DOMAINS.some(domain => currentDomain.includes(domain));
+}
+
+if (!isIndeedSite) {
+  console.log(`🚫 Extension disabled - Not an Indeed site (${currentDomain})`);
+} else {
+  // ⚡ MAIN EXTENSION CODE - Only runs on Indeed sites
+  console.log("🚀 Content script loaded on Indeed - preventing cache...");
 
 // Check if content script was previously injected
 if (window.indeedAutoApplyLoaded) {
@@ -94,6 +120,55 @@ window.addEventListener("error", function (event) {
     }
   }
 });
+
+// Global emergency stop flag
+window.emergencyStopFlag = false;
+
+// Emergency stop function - can be called from anywhere
+function triggerEmergencyStop() {
+  console.log("🚨 EMERGENCY STOP TRIGGERED");
+  window.emergencyStopFlag = true;
+  
+  // Send message to background to stop everything
+  safeSendMessage({ action: 'emergencyStop' });
+  
+  // Stop any running automation
+  processing = false;
+  
+  // Show user notification
+  if (document.body) {
+    const notice = document.createElement("div");
+    notice.style.cssText = `
+      position: fixed !important;
+      top: 20px !important;
+      left: 50% !important;
+      transform: translateX(-50%) !important;
+      background: #dc3545 !important;
+      color: white !important;
+      padding: 15px 25px !important;
+      border-radius: 8px !important;
+      z-index: 999999 !important;
+      font-family: Arial, sans-serif !important;
+      font-size: 16px !important;
+      font-weight: bold !important;
+      box-shadow: 0 4px 12px rgba(0,0,0,0.3) !important;
+    `;
+    notice.textContent = "🛑 AUTOMATION STOPPED - All processes halted";
+    document.body.appendChild(notice);
+    setTimeout(() => notice.remove(), 5000);
+  }
+}
+
+// Keyboard shortcut for emergency stop (Ctrl+Shift+X)
+document.addEventListener('keydown', (event) => {
+  if (event.ctrlKey && event.shiftKey && event.key === 'X') {
+    event.preventDefault();
+    triggerEmergencyStop();
+  }
+});
+
+// Console command for emergency stop (developers can type: stopAutomation() in console)
+window.stopAutomation = triggerEmergencyStop;
 
 document.addEventListener("click", () => {
   console.log("Content script clicked!");
@@ -1757,8 +1832,28 @@ const scrapePage = (getJobCards) => {
       card.querySelector(".jobMetaDataGroup")?.innerText?.trim() || null;
     // Get job link and id
     const jobLinkEl = card.querySelector("h2.jobTitle a");
-    const jobLink = jobLinkEl?.href || null;
+    let jobLink = jobLinkEl?.href || null;
     const jobId = jobLinkEl?.getAttribute("data-jk") || jobLinkEl?.id || null;
+    
+    // Validate and fix job URL to ensure it goes to the right page
+    if (jobLink) {
+      // Ensure the URL is absolute
+      if (jobLink.startsWith('/')) {
+        jobLink = 'https://www.indeed.com' + jobLink;
+      }
+      
+      // Make sure it's a viewjob URL, not a search URL
+      if (!jobLink.includes('/viewjob?') && !jobLink.includes('/jobs/view/')) {
+        // If we have a job ID, construct the proper viewjob URL
+        if (jobId) {
+          jobLink = `https://www.indeed.com/viewjob?jk=${jobId}`;
+          console.log(`🔧 Fixed job URL for ${jobTitle}: ${jobLink}`);
+        } else {
+          console.log(`⚠️ Invalid job URL for ${jobTitle}: ${jobLink}`);
+          jobLink = null; // This will cause the job to be skipped
+        }
+      }
+    }
 
     // Check if this is an "Easily apply" job - ONLY queue these jobs
     const easyApplyElement = card.querySelector('[data-testid="indeedApply"]');
@@ -1860,6 +1955,83 @@ function isExtensionContextValid() {
   } catch (error) {
     // Extension context invalidated or other error
     console.log("Extension context validation failed:", error.message);
+    return false;
+  }
+}
+
+/**
+ * Check if automation should run - only on main Indeed search/jobs pages
+ */
+function shouldRunAutomation() {
+  try {
+    const url = window.location.href;
+    const hostname = window.location.hostname;
+    
+    // Must be on Indeed domain
+    if (!hostname.includes('indeed.com')) {
+      console.log("❌ Not on Indeed domain - automation disabled");
+      return false;
+    }
+    
+    // Allow automation on job search/results pages AND any job application pages
+    const isJobSearchPage = url.includes('/jobs?') || url.includes('/viewjob?') || url.includes('/jobs/');
+    const isApplicationPage = url.includes('smartapply.indeed.com') || 
+                            url.includes('form/profile') ||
+                            url.includes('apply/resume') ||
+                            url.includes('/apply') ||
+                            url.includes('indeed.com/m/jobs') ||
+                            document.querySelector('#mosaic-contactInfoModule') ||
+                            document.querySelector('[data-testid="profile-location-page"]') ||
+                            document.querySelector('form[method="post"]');
+    
+    if (!isJobSearchPage && !isApplicationPage) {
+      console.log("❌ Not on job search or application page - automation disabled");
+      console.log("Current URL:", url);
+      return false;
+    }
+    
+    // Check if we're in a valid context
+    if (!isExtensionContextValid()) {
+      console.log("❌ Extension context invalid - automation disabled");
+      return false;
+    }
+    
+    return true;
+  } catch (error) {
+    console.error("❌ Error checking if automation should run:", error.message);
+    return false;
+  }
+}
+
+/**
+ * Safely send message to background script with proper error handling
+ * Prevents "message channel closed" and "back/forward cache" errors
+ */
+function safeSendMessage(message, callback = null) {
+  if (!isExtensionContextValid()) {
+    console.log("⚠️ Cannot send message - extension context invalid");
+    return false;
+  }
+  
+  try {
+    if (callback) {
+      chrome.runtime.sendMessage(message, (response) => {
+        if (chrome.runtime.lastError) {
+          console.log("📢 Message response error (expected on page navigation):", chrome.runtime.lastError.message);
+        } else {
+          callback(response);
+        }
+      });
+    } else {
+      chrome.runtime.sendMessage(message, () => {
+        if (chrome.runtime.lastError) {
+          console.log("📢 Message send error (expected on page navigation):", chrome.runtime.lastError.message);
+        }
+      });
+    }
+    return true;
+  } catch (error) {
+    console.log("📢 Message send failed (extension context lost):", error.message);
     return false;
   }
 }
@@ -2241,6 +2413,12 @@ window.addEventListener("beforeunload", function () {
 
 // Main workflow function with CAPTCHA pause
 async function completeApplicationWorkflow() {
+  // Check for emergency stop before starting
+  if (window.emergencyStopFlag) {
+    console.log("🚨 Emergency stop - workflow cancelled");
+    return { success: false, reason: "Emergency stop triggered" };
+  }
+  
   const results = [];
   try {
     results.push(await fillContactFieldsAsync());
@@ -2480,18 +2658,6 @@ function fillSupportingDocuments() {
   return true;
 }
 
-function acceptLegalDisclaimer() {
-  // Check all checkboxes for legal acceptance
-  const checkboxes = document.querySelectorAll('input[type="checkbox"]');
-  checkboxes.forEach((checkbox) => {
-    if (!checkbox.checked) {
-      checkbox.checked = true;
-      checkbox.dispatchEvent(new Event("change", { bubbles: true }));
-    }
-  });
-  return true;
-}
-
 function fillContactFieldsAsync() {
   return safePromise(fillContactFields, "fillContactFields");
 }
@@ -2558,58 +2724,7 @@ async function clickRelevantButton(keywords, stepName) {
 }
 
 // Main workflow function with improved error specificity
-async function completeApplicationWorkflow() {
-  const results = [];
-  try {
-    results.push(await fillContactFieldsAsync());
-    results.push(await fillScreenerQuestionsAsync());
-    results.push(await fillResumeSectionAsync());
-    results.push(await fillSupportingDocumentsAsync());
-    results.push(await acceptLegalDisclaimerAsync());
-    // Click any relevant button (apply, continue, review, next, submit)
-    results.push(await clickRelevantButton(["apply"], "apply"));
-    results.push(
-      await clickRelevantButton(
-        ["continue", "review", "next"],
-        "continue/review/next"
-      )
-    );
-    results.push(
-      await clickRelevantButton(["submit your application", "submit"], "submit")
-    );
-  } catch (err) {
-    results.push({
-      success: false,
-      step: "exception",
-      error: `Exception: ${err.message}`,
-    });
-  }
-  // Error reporting
-  const errorSteps = results.filter((r) => !r.success);
-  if (errorSteps.length > 0) {
-    errorSteps.forEach((e) => {
-      if (e.error && e.error.includes("not found")) {
-        console.error(`Step '${e.step}' failed: ${e.error}`);
-      } else if (e.error && e.error.includes("Exception")) {
-        console.error(`Step '${e.step}' encountered an exception: ${e.error}`);
-      } else {
-        console.error(`Step '${e.step}' failed: ${e.error || "Unknown error"}`);
-      }
-    });
-    return false;
-  }
-  return true;
-}
 
-// Listen for message to trigger full workflow
-chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
-  if (msg.action === "completeApplicationWorkflow") {
-    completeApplicationWorkflow().then((success) => {
-      sendResponse({ success });
-    });
-    return true; // Indicates async response
-  }
-});
 
 // ═══════════════════════════════════════════════════════════════════════════
 // 🎯 EMPLOYER QUESTIONS HANDLER - Dynamic form filling for any question types
@@ -2639,30 +2754,6 @@ function waitForElements(selector, timeout = 10000) {
     }
     
     checkForElements();
-  });
-}
-
-/**
- * Wait for a single element to be present in the DOM
- */
-function waitForElement(selector, timeout = 5000) {
-  return new Promise((resolve, reject) => {
-    const startTime = Date.now();
-    
-    function checkForElement() {
-      const element = document.querySelector(selector);
-      if (element) {
-        console.log(`✅ Found element with selector: ${selector}`);
-        resolve(element);
-      } else if (Date.now() - startTime > timeout) {
-        console.log(`⏰ Timeout waiting for element: ${selector}`);
-        resolve(null);
-      } else {
-        setTimeout(checkForElement, 100);
-      }
-    }
-    
-    checkForElement();
   });
 }
 
@@ -3269,174 +3360,105 @@ async function handleSkillsQuestion(question, pageData) {
 }
 
 async function handleEducationQuestion(question, pageData) {
-  console.log("🎓 Handling education question...");
-  
-  // Handle selects for degree levels
-  const selectInput = pageData.selects.find(select => select.label === question.label);
-  if (selectInput) {
-    const educationValue = getEducationValue(question.label);
-    selectInput.element.value = educationValue;
-    selectInput.element.dispatchEvent(new Event('change', { bubbles: true }));
-    console.log(`✅ Selected education: ${educationValue}`);
-    return true;
+  try {
+    if (!isExtensionContextValid()) {
+      console.log("❌ Extension context invalid - skipping education question");
+      return false;
+    }
+    
+    console.log("🎓 Handling education question...");
+    
+    // Handle selects for degree levels
+    const selectInput = pageData.selects.find(select => select.label === question.label);
+    if (selectInput && selectInput.element) {
+      try {
+        const educationValue = getEducationValue(question.label);
+        selectInput.element.value = educationValue;
+        selectInput.element.dispatchEvent(new Event('change', { bubbles: true }));
+        console.log(`✅ Selected education: ${educationValue}`);
+        return true;
+      } catch (selectError) {
+        console.error("❌ Error with education select:", selectError.message);
+      }
+    }
+    
+    // Handle text inputs for school names, etc.
+    const textInput = pageData.textInputs.find(input => input.label === question.label);
+    if (textInput && textInput.element) {
+      try {
+        const educationText = getEducationText(question.label);
+        textInput.element.value = educationText;
+        textInput.element.dispatchEvent(new Event('input', { bubbles: true }));
+        textInput.element.dispatchEvent(new Event('change', { bubbles: true }));
+        console.log(`✅ Filled education: ${educationText}`);
+        return true;
+      } catch (inputError) {
+        console.error("❌ Error with education text input:", inputError.message);
+      }
+    }
+    
+    console.log("⚠️ Could not find education input field");
+    return false;
+  } catch (error) {
+    console.error("❌ Error in handleEducationQuestion:", error.message);
+    return false;
   }
-  
-  // Handle text inputs for school names, etc.
-  const textInput = pageData.textInputs.find(input => input.label === question.label);
-  if (textInput) {
-    const educationText = getEducationText(question.label);
-    textInput.element.value = educationText;
-    textInput.element.dispatchEvent(new Event('input', { bubbles: true }));
-    textInput.element.dispatchEvent(new Event('change', { bubbles: true }));
-    console.log(`✅ Filled education: ${educationText}`);
-    return true;
-  }
-  
-  console.log("⚠️ Could not find education input field");
-  return false;
 }
 
 async function handleGenericQuestion(question, pageData) {
-  console.log("❓ Handling generic question...");
-  
-  // Try radio buttons first
-  const radioGroup = Object.values(pageData.radioGroups).find(group => 
-    group.label === question.label
-  );
-  
-  if (radioGroup && radioGroup.options.length > 0) {
-    // Try to select a reasonable option (Yes > first option)
-    const yesOption = radioGroup.options.find(opt => 
-      opt.element.value.toLowerCase() === 'yes' || 
-      opt.element.value === '1'
-    ) || radioGroup.options[0];
+  try {
+    if (!isExtensionContextValid()) {
+      console.log("❌ Extension context invalid - skipping generic question");
+      return false;
+    }
     
-    await clickRadioButton(yesOption.element);
-    console.log("✅ Selected option for generic question");
-    return true;
+    console.log("❓ Handling generic question...");
+    
+    // Try radio buttons first
+    const radioGroup = Object.values(pageData.radioGroups).find(group => 
+      group.label === question.label
+    );
+    
+    if (radioGroup && radioGroup.options.length > 0) {
+      try {
+        // Try to select a reasonable option (Yes > first option)
+        const yesOption = radioGroup.options.find(opt => 
+          opt.element && (opt.element.value.toLowerCase() === 'yes' || 
+          opt.element.value === '1')
+        ) || radioGroup.options[0];
+        
+        if (yesOption && yesOption.element) {
+          await clickRadioButton(yesOption.element);
+          console.log("✅ Selected option for generic question");
+          return true;
+        }
+      } catch (radioError) {
+        console.error("❌ Error with generic radio button:", radioError.message);
+      }
+    }
+    
+    // Try text inputs
+    const textInput = pageData.textInputs.find(input => input.label === question.label);
+    if (textInput && textInput.element) {
+      try {
+        textInput.element.value = 'N/A';
+        textInput.element.dispatchEvent(new Event('input', { bubbles: true }));
+        console.log("✅ Filled generic text input");
+        return true;
+      } catch (inputError) {
+        console.error("❌ Error with generic text input:", inputError.message);
+      }
+    }
+    
+    console.log("⚠️ Could not handle generic question");
+    return false;
+  } catch (error) {
+    console.error("❌ Error in handleGenericQuestion:", error.message);
+    return false;
   }
-  
-  // Try text inputs
-  const textInput = pageData.textInputs.find(input => input.label === question.label);
-  if (textInput) {
-    textInput.element.value = 'N/A';
-    textInput.element.dispatchEvent(new Event('input', { bubbles: true }));
-    console.log("✅ Filled generic text input");
-    return true;
-  }
-  
-  console.log("⚠️ Could not handle generic question");
-  return false;
 }
 
-async function fillEmployerQuestions() {
-  console.log("📝 NEW APPROACH: Starting employer questions with page scraping...");
-  
-  try {
-    // Step 1: Scrape the entire page to map all elements
-    const pageData = await scrapePageElements();
-    
-    // Step 2: Process using VERSION 2.0 aggressive filtering with starter patterns
-    const processed = await processScrapedElementsV2(pageData);
-    
-    for (let i = 0; i < questionContainers.length; i++) {
-      const container = questionContainers[i];
-      console.log(`\n🔍 Processing question ${i + 1}/${questionContainers.length}`);
-      
-      try {
-        // Wait for question label/text to be available using multiple dynamic selectors
-        console.log("⏳ Waiting for question label...");
-        const labelElement = await waitForElementInContainer(container, 'label, legend, [data-testid*="label"], [data-testid*="rich-text"], span[data-testid*="rich-text"]');
-        const labelText = labelElement ? 
-          (labelElement.textContent || labelElement.innerText || '').toLowerCase().trim() : '';
-        
-        console.log(`📝 Question label: "${labelText}"`);
-        
-        if (labelText) {
-          // Check for different input types and fill accordingly
-          await fillQuestionByType(container, labelText);
-          filledCount++;
-        } else {
-          console.log("⚠️ No label found for question container");
-        }
-        
-        // Small delay between questions
-        await new Promise(r => setTimeout(r, 300));
-        
-      } catch (questionError) {
-        console.error(`❌ Error processing question ${i + 1}:`, questionError.message);
-      }
-    }
-    
-    console.log(`✅ Successfully filled ${filledCount} questions`);
-    
-    // After filling all questions, look for and click the continue button
-    console.log("🔍 Looking for Continue button after filling questions...");
-    
-    const continueSelectors = [
-      // Generic selectors that should work across different pages
-      'button[data-testid*="continue"]',
-      'button.mosaic-provider-module-apply-questions-6xgesl', // Questions page continue button
-      'button[type="submit"]',
-      // Look for buttons in the questions container
-      '.ia-Questions button[type="button"]',
-      '.mosaic-provider-module-apply-questions button[type="button"]',
-      '[class*="apply-questions"] button',
-      'button[class*="6xgesl"]' // Dynamic class pattern for continue buttons
-    ];
-    
-    let continueButton = null;
-    
-    // Wait for Continue button to be available using promises
-    console.log("⏳ Waiting for Continue button to be available...");
-    for (const selector of continueSelectors) {
-      try {
-        continueButton = await waitForElement(selector, 3000);
-        if (continueButton) {
-          console.log(`✅ Found Continue button with selector: ${selector}`);
-          break;
-        }
-      } catch (e) {
-        // Ignore selector errors and try next selector
-     
-      }
-    }
-    
-    // If no button found, wait for buttons to load and search by text content
-    if (!continueButton) {
-      console.log("⏳ Waiting for buttons to load for text-based search...");
-      await new Promise(r => setTimeout(r, 1000)); // Wait for buttons to render
-      
-      const allButtons = document.querySelectorAll('button, input[type="submit"], input[type="button"]');
-      for (const btn of allButtons) {
-        const text = (btn.textContent || btn.value || '').toLowerCase().trim();
-        if (text.includes('continue') || text.includes('next') || text.includes('proceed') || text.includes('apply anyway')) {
-          continueButton = btn;
-          console.log(`✅ Found Continue button by text: "${text}"`);
-          break;
-        }
-      }
-    }
-    
-    if (continueButton) {
-      // Scroll to the button to ensure it's visible
-      continueButton.scrollIntoView({ behavior: 'smooth', block: 'center' });
-      await new Promise(r => setTimeout(r, 500));
-      
-      console.log("🔄 Clicking Continue button after questions...");
-      continueButton.click();
-      console.log("✅ Clicked Continue button");
-      
-      // Wait to see if the page changes
-      await new Promise(r => setTimeout(r, 2500));
-    } else {
-      console.log("❌ Could not find Continue button after filling questions");
-    }
-    
-  } catch (error) {
-    console.error("❌ Error in fillEmployerQuestions:", error.message);
-  }
-}
+
 
 /**
  * Fill individual question based on its type and content
@@ -3871,35 +3893,6 @@ function getSelectValue(labelText, selectElement) {
 }
 
 /**
- * Get appropriate radio button selection
- */
-function getRadioValue(labelText, radioButtons) {
-  const text = labelText.toLowerCase();
-  const radios = Array.from(radioButtons);
-  
-  // For yes/no questions, prefer "yes"
-  if (text.includes('eligible') || text.includes('authorized') || text.includes('available')) {
-    const yesRadio = radios.find(radio => {
-      const label = radio.parentElement?.textContent?.toLowerCase() || '';
-      return label.includes('yes') || label.includes('authorized') || label.includes('eligible');
-    });
-    if (yesRadio) return yesRadio;
-  }
-  
-  // For experience questions, select middle option or "some experience"
-  if (text.includes('experience') || text.includes('years')) {
-    const expRadio = radios.find(radio => {
-      const label = radio.parentElement?.textContent?.toLowerCase() || '';
-      return label.includes('2-5') || label.includes('some') || label.includes('moderate');
-    });
-    if (expRadio) return expRadio;
-  }
-  
-  // Default to first option
-  return radios[0];
-}
-
-/**
  * Determine if checkboxes should be checked
  */
 function getCheckboxValue(labelText) {
@@ -4282,6 +4275,12 @@ async function clickApplyButton() {
  * The unlimited workflow loop that handles any number of pages
  */
 async function runUnlimitedWorkflowLoop() {
+  // CRITICAL: Check if automation should run before starting
+  if (!shouldRunAutomation()) {
+    console.log("🛑 Automation blocked - not on valid Indeed page");
+    return { success: false, reason: "Not on valid Indeed page" };
+  }
+  
   console.log("🔄 Starting unlimited workflow loop...");
   
   let pageCount = 0;
@@ -4289,6 +4288,18 @@ async function runUnlimitedWorkflowLoop() {
   let consecutiveFailures = 0;
   
   while (pageCount < maxPages && consecutiveFailures < 3) {
+    // Check for emergency stop
+    if (window.emergencyStopFlag) {
+      console.log("🚨 Emergency stop detected - halting workflow");
+      return { success: false, reason: "Emergency stop triggered" };
+    }
+    
+    // Check if we should still be running automation
+    if (!shouldRunAutomation()) {
+      console.log("🛑 Automation stopped - no longer on valid Indeed page");
+      return { success: false, reason: "Left valid Indeed page" };
+    }
+    
     pageCount++;
     console.log(`\n📄 Processing page ${pageCount}...`);
     
@@ -4329,15 +4340,34 @@ async function runUnlimitedWorkflowLoop() {
       }
       
     } catch (error) {
-      console.error(`❌ Error on page ${pageCount}:`, error);
+      // Handle different types of exceptions gracefully
+      if (error instanceof DOMException) {
+        console.error(`❌ DOM Error on page ${pageCount}: ${error.name} - ${error.message}`);
+      } else if (error.message && error.message.includes('Extension context invalidated')) {
+        console.error(`❌ Extension context lost on page ${pageCount}`);
+        break; // Stop processing if extension context is lost
+      } else {
+        console.error(`❌ Error on page ${pageCount}:`, error.message || error);
+      }
+      
       consecutiveFailures++;
+      
+      // Check if extension context is still valid before trying to recover
+      if (!isExtensionContextValid()) {
+        console.error("❌ Extension context invalidated - stopping workflow");
+        break;
+      }
       
       // Try to recover by proceeding to next page
       try {
         await proceedToNextPage();
         await new Promise(r => setTimeout(r, 2000));
       } catch (recoverError) {
-        console.error("❌ Recovery failed:", recoverError);
+        if (recoverError instanceof DOMException) {
+          console.error("❌ DOM Recovery failed:", recoverError.name, recoverError.message);
+        } else {
+          console.error("❌ Recovery failed:", recoverError.message || recoverError);
+        }
         break;
       }
     }
@@ -4377,58 +4407,90 @@ async function processCurrentPage() {
   }
   
   try {
+    // Check extension context before processing
+    if (!isExtensionContextValid()) {
+      console.log("⚠️ Extension context invalid - skipping page processing");
+      return false;
+    }
+    
     // Fill contact information if present
-    if (await hasContactInfo()) {
-      console.log("📝 Processing contact information...");
-      const contactResult = await fillContactInfo();
-      if (contactResult.filled > 0) {
-        processedSomething = true;
-        interactionCount += contactResult.filled;
-        console.log(`✅ Filled ${contactResult.filled} contact fields`);
+    try {
+      if (await hasContactInfo()) {
+        console.log("📝 Processing contact information...");
+        const contactResult = await fillContactInfo();
+        if (contactResult && contactResult.filled > 0) {
+          processedSomething = true;
+          interactionCount += contactResult.filled;
+          console.log(`✅ Filled ${contactResult.filled} contact fields`);
+        }
       }
+    } catch (contactError) {
+      console.error("⚠️ Contact info processing failed:", contactError.message || contactError);
     }
     
     // Fill employer questions if present  
-    if (await hasEmployerQuestions()) {
-      console.log("📝 Processing employer questions...");
-      const questionResult = await fillEmployerQuestions();
-      if (questionResult.filled > 0) {
-        processedSomething = true;
-        interactionCount += questionResult.filled;
-        console.log(`✅ Answered ${questionResult.filled} employer questions`);
+    try {
+      if (await hasEmployerQuestions()) {
+        console.log("📝 Processing employer questions...");
+        const questionResult = await fillEmployerQuestions();
+        if (questionResult && questionResult.filled > 0) {
+          processedSomething = true;
+          interactionCount += questionResult.filled;
+          console.log(`✅ Answered ${questionResult.filled} employer questions`);
+        }
       }
+    } catch (questionError) {
+      console.error("⚠️ Employer questions processing failed:", questionError.message || questionError);
     }
     
     // Handle resume selection if present
-    if (await hasResumeSelection()) {
-      console.log("📝 Processing resume selection...");
-      const resumeResult = await selectResume();
-      if (resumeResult.selected) {
-        processedSomething = true;
-        interactionCount += 1;
-        console.log(`✅ Selected resume`);
+    try {
+      if (await hasResumeSelection()) {
+        console.log("📝 Processing resume selection...");
+        const resumeResult = await selectResume();
+        if (resumeResult && resumeResult.selected) {
+          processedSomething = true;
+          interactionCount += 1;
+          console.log(`✅ Selected resume`);
+        }
       }
+    } catch (resumeError) {
+      console.error("⚠️ Resume selection failed:", resumeError.message || resumeError);
     }
     
     // Handle document uploads if present
-    if (await hasDocumentUploads()) {
-      console.log("📝 Processing document uploads...");
-      await handleDocumentUploads();
-      processedSomething = true;
+    try {
+      if (await hasDocumentUploads()) {
+        console.log("📝 Processing document uploads...");
+        await handleDocumentUploads();
+        processedSomething = true;
+      }
+    } catch (uploadError) {
+      console.error("⚠️ Document upload processing failed:", uploadError.message || uploadError);
     }
     
     // Accept legal disclaimers if present
-    if (await hasLegalDisclaimer()) {
-      console.log("📝 Processing legal disclaimers...");
-      await acceptLegalDisclaimer();
-      processedSomething = true;
+    try {
+      if (await hasLegalDisclaimer()) {
+        console.log("📝 Processing legal disclaimers...");
+        await acceptLegalDisclaimer();
+        processedSomething = true;
+      }
+    } catch (legalError) {
+      console.error("⚠️ Legal disclaimer processing failed:", legalError.message || legalError);
     }
     
     console.log(`📊 Page processing complete - processed: ${processedSomething}`);
     return processedSomething;
     
   } catch (error) {
-    console.error("❌ Error processing page:", error);
+    if (error instanceof DOMException) {
+      console.error("❌ DOM Error processing page:", error.name, error.message);
+    } else if (error.message && error.message.includes('Extension context invalidated')) {
+      console.error("❌ Extension context lost during page processing");
+    } else {
+      console.error("❌ Error processing page:", error.message || error);
+    }
     return false;
   }
 }
@@ -4439,28 +4501,50 @@ async function processCurrentPage() {
 async function proceedToNextPage() {
   console.log("🔍 Looking for Continue/Submit buttons...");
   
-  // Look for Continue buttons first
-  const continueButton = await findContinueButton();
-  if (continueButton) {
-    console.log("🖱️ Clicking Continue button...");
-    continueButton.click();
-    await new Promise(r => setTimeout(r, 1000));
-    return true;
-  }
-  
-  // Look for Submit buttons
-  const submitButton = await findSubmitButton();
-  if (submitButton) {
-    console.log("🖱️ Clicking Submit button...");
-    submitButton.click();
-    await new Promise(r => setTimeout(r, 1000));
-    return true;
+  try {
+    // Check extension context before proceeding
+    if (!isExtensionContextValid()) {
+      console.log("⚠️ Extension context invalid - cannot proceed to next page");
+      return false;
+    }
+    
+    // Look for Continue buttons first
+    const continueButton = await findContinueButton();
+    if (continueButton) {
+      console.log("🖱️ Clicking Continue button...");
+      try {
+        continueButton.click();
+        await new Promise(r => setTimeout(r, 1000));
+        return true;
+      } catch (clickError) {
+        console.error("❌ Error clicking Continue button:", clickError.message);
+      }
+    }
+    
+    // Look for Submit buttons
+    const submitButton = await findSubmitButton();
+    if (submitButton) {
+      console.log("🖱️ Clicking Submit button...");
+      try {
+        submitButton.click();
+        await new Promise(r => setTimeout(r, 1000));
+        return true;
+      } catch (clickError) {
+        console.error("❌ Error clicking Submit button:", clickError.message);
+      }
+    }
+  } catch (error) {
+    console.error("❌ Error in proceedToNextPage:", error.message);
   }
   
   // Try pressing Enter key as fallback
-  console.log("⌨️ Trying Enter key as fallback...");
-  document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', keyCode: 13 }));
-  await new Promise(r => setTimeout(r, 1000));
+  try {
+    console.log("⌨️ Trying Enter key as fallback...");
+    document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', keyCode: 13 }));
+    await new Promise(r => setTimeout(r, 1000));
+  } catch (keyError) {
+    console.error("❌ Error with Enter key fallback:", keyError.message);
+  }
   
   return false;
 }
@@ -4775,47 +4859,6 @@ async function hasLegalDisclaimer() {
   return !!(await waitForElement('input[type="checkbox"][name*="legal"], input[type="checkbox"][name*="terms"], input[type="checkbox"][name*="agree"]', 1000));
 }
 
-/**
- * Enhanced form filling functions with interaction tracking
- */
-async function fillContactInfo() {
-  let filled = 0;
-  
-  // Fill basic contact fields
-  const nameInput = await waitForElement('input[name*="name"], input[placeholder*="name"]', 2000);
-  if (nameInput && !nameInput.value) {
-    const success = await fillInputSafely(nameInput, 'John Smith', 'name');
-    if (success) filled++;
-  }
-  
-  const emailInput = await waitForElement('input[name*="email"], input[type="email"]', 2000);
-  if (emailInput && !emailInput.value) {
-    const success = await fillInputSafely(emailInput, 'john.smith@email.com', 'email');
-    if (success) filled++;
-  }
-  
-  const phoneInput = await waitForElement('input[name*="phone"], input[type="tel"]', 2000);
-  if (phoneInput && !phoneInput.value) {
-    const success = await fillInputSafely(phoneInput, '555-123-4567', 'phone');
-    if (success) filled++;
-  }
-  
-  // Track additional contact fields
-  const addressInput = await waitForElement('input[name*="address"], input[placeholder*="address"]', 1000);
-  if (addressInput && !addressInput.value) {
-    const success = await fillInputSafely(addressInput, '123 Main Street', 'address');
-    if (success) filled++;
-  }
-  
-  const cityInput = await waitForElement('input[name*="city"], input[placeholder*="city"]', 1000);
-  if (cityInput && !cityInput.value) {
-    const success = await fillInputSafely(cityInput, 'Dallas', 'city');
-    if (success) filled++;
-  }
-  
-  window.formInteractionCount += filled;
-  return { filled };
-}
 
 async function selectResume() {
   const resumeRadio = await waitForElement('input[type="radio"][name*="resume"]', 2000);
@@ -5922,6 +5965,12 @@ const questionsForManyToMany = [
     "Where are you located?"
 ];
 
+const manyToManyResults = processMultipleAnswers(
+    questionsForManyToMany, 
+    testAnswers, 
+    nouns, verbs, propernouns, subjects, userShortResponce, actionWorkds,
+    { minThreshold: 3, maxAnswers: 5, includeReverse: true }
+);
 
 console.log(`\nProcessed ${manyToManyResults.summary.totalQuestions} questions:`);
 console.log(`✅ Questions with matches: ${manyToManyResults.summary.questionsWithMatches}`);
@@ -6025,6 +6074,8 @@ manyToManyResults.questionToAnswers.slice(0, 3).forEach(qa => {
         console.log(`\n📄 Saved Response:`, JSON.stringify(serialized, null, 2));
     }
 });
+
+} // End of Indeed site check - closes the main conditional block
 
 
 
