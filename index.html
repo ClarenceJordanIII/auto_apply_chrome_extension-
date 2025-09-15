@@ -3,14 +3,206 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Chrome extension</title>
-    <link rel="stylesheet" href="styles.css">
+    <title>Chrome Extension</title>
     <script type="module" src="index.js" defer></script>
-     <script src="https://cdn.jsdelivr.net/npm/@tailwindcss/browser@4" ></script>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+        
+        body {
+            width: 350px;
+            min-height: 400px;
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            background: #f8f9fa;
+            padding: 16px;
+        }
+        
+        .timeline-container {
+            background: white;
+            border-radius: 8px;
+            padding: 20px;
+            box-shadow: 0 2px 8px rgba(0,0,0,0.1);
+        }
+        
+        .timeline-item {
+            display: flex;
+            margin-bottom: 20px;
+            position: relative;
+        }
+        
+        .timeline-item:last-child {
+            margin-bottom: 0;
+        }
+        
+        .timeline-icon {
+            width: 24px;
+            height: 24px;
+            border-radius: 50%;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            margin-right: 12px;
+            flex-shrink: 0;
+            position: relative;
+            z-index: 1;
+        }
+        
+        .timeline-icon.gray { background: #6b7280; }
+        .timeline-icon.blue { background: #3b82f6; }
+        .timeline-icon.green { background: #10b981; }
+        
+        .timeline-icon svg {
+            width: 14px;
+            height: 14px;
+            fill: white;
+        }
+        
+        .timeline-line {
+            position: absolute;
+            left: 11px;
+            top: 24px;
+            width: 2px;
+            height: 20px;
+            background: #e5e7eb;
+        }
+        
+        .timeline-content {
+            flex: 1;
+            padding-top: 2px;
+        }
+        
+        .timeline-text {
+            font-size: 14px;
+            color: #374151;
+            line-height: 1.4;
+            margin-bottom: 2px;
+        }
+        
+        .timeline-date {
+            font-size: 12px;
+            color: #6b7280;
+        }
+        
+        .strong {
+            font-weight: 600;
+            color: #111827;
+        }
+        
+        .header {
+            text-align: center;
+            margin-bottom: 20px;
+        }
+        
+        .header h1 {
+            font-size: 18px;
+            font-weight: 600;
+            color: #111827;
+            margin-bottom: 4px;
+        }
+        
+        .header p {
+            font-size: 14px;
+            color: #6b7280;
+        }
+    </style>
 </head>
 <body>
-      <h1 class="text-3xl font-bold underline">
-      Hello world!
-    </h1>
+    <div class="timeline-container">
+        <div class="header">
+            <h1>Job Application Status</h1>
+            <p>Front End Developer Position</p>
+        </div>
+        
+        <!-- Status Display for Live Updates -->
+        <div id="status-section" style="background: #f3f4f6; border-radius: 6px; padding: 12px; margin-bottom: 20px; border-left: 4px solid #3b82f6;">
+            <div style="font-size: 12px; color: #6b7280; margin-bottom: 4px;">LIVE STATUS</div>
+            <div id="status" style="font-size: 14px; color: #111827; font-weight: 500;">
+                Ready for job applications...
+            </div>
+            <div id="status-time" style="font-size: 11px; color: #9ca3af; margin-top: 4px;"></div>
+        </div>
+        <!-- Applied to Front End Developer -->
+        <div class="timeline-item">
+            <div class="timeline-icon gray">
+                <svg viewBox="0 0 20 20">
+                    <path fill-rule="evenodd" d="M10 9a3 3 0 100-6 3 3 0 000 6zm-7 9a7 7 0 1114 0H3z" clip-rule="evenodd" />
+                </svg>
+            </div>
+            <div class="timeline-line"></div>
+            <div class="timeline-content">
+                <div class="timeline-text">
+                    Applied to <span class="strong">Front End Developer</span>
+                </div>
+                <div class="timeline-date">Sep 20</div>
+            </div>
+        </div>
+
+        <!-- Advanced to phone screening -->
+        <div class="timeline-item">
+            <div class="timeline-icon blue">
+                <svg viewBox="0 0 20 20">
+                    <path d="M2 10.5a1.5 1.5 0 113 0v6a1.5 1.5 0 01-3 0v-6zM6 10.333v5.43a2 2 0 001.106 1.79l.05.025A4 4 0 008.943 18h5.416a2 2 0 001.962-1.608l1.2-6A2 2 0 0015.56 8H12V4a2 2 0 00-2-2 1 1 0 00-1 1v.667a4 4 0 01-.8 2.4L6.8 7.933a4 4 0 00-.8 2.4z" />
+                </svg>
+            </div>
+            <div class="timeline-line"></div>
+            <div class="timeline-content">
+                <div class="timeline-text">
+                    Advanced to phone screening by <span class="strong">Bethany Blake</span>
+                </div>
+                <div class="timeline-date">Sep 22</div>
+            </div>
+        </div>
+
+        <!-- Completed phone screening -->
+        <div class="timeline-item">
+            <div class="timeline-icon green">
+                <svg viewBox="0 0 20 20">
+                    <path fill-rule="evenodd" d="M16.707 5.293a1 1 0 010 1.414l-8 8a1 1 0 01-1.414 0l-4-4a1 1 0 011.414-1.414L8 12.586l7.293-7.293a1 1 0 011.414 0z" clip-rule="evenodd" />
+                </svg>
+            </div>
+            <div class="timeline-line"></div>
+            <div class="timeline-content">
+                <div class="timeline-text">
+                    Completed phone screening with <span class="strong">Martha Gardner</span>
+                </div>
+                <div class="timeline-date">Sep 28</div>
+            </div>
+        </div>
+
+        <!-- Advanced to interview -->
+        <div class="timeline-item">
+            <div class="timeline-icon blue">
+                <svg viewBox="0 0 20 20">
+                    <path d="M2 10.5a1.5 1.5 0 113 0v6a1.5 1.5 0 01-3 0v-6zM6 10.333v5.43a2 2 0 001.106 1.79l.05.025A4 4 0 008.943 18h5.416a2 2 0 001.962-1.608l1.2-6A2 2 0 0015.56 8H12V4a2 2 0 00-2-2 1 1 0 00-1 1v.667a4 4 0 01-.8 2.4L6.8 7.933a4 4 0 00-.8 2.4z" />
+                </svg>
+            </div>
+            <div class="timeline-line"></div>
+            <div class="timeline-content">
+                <div class="timeline-text">
+                    Advanced to interview by <span class="strong">Bethany Blake</span>
+                </div>
+                <div class="timeline-date">Sep 30</div>
+            </div>
+        </div>
+
+        <!-- Completed interview -->
+        <div class="timeline-item">
+            <div class="timeline-icon green">
+                <svg viewBox="0 0 20 20">
+                    <path fill-rule="evenodd" d="M16.707 5.293a1 1 0 010 1.414l-8 8a1 1 0 01-1.414 0l-4-4a1 1 0 011.414-1.414L8 12.586l7.293-7.293a1 1 0 011.414 0z" clip-rule="evenodd" />
+                </svg>
+            </div>
+            <!-- No line for last item -->
+            <div class="timeline-content">
+                <div class="timeline-text">
+                    Completed interview with <span class="strong">Katherine Snyder</span>
+                </div>
+                <div class="timeline-date">Oct 4</div>
+            </div>
+        </div>
+    </div>
 </body>
 </html>

@@ -249,6 +249,30 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     return true;
   }
 
+  // Handle status messages from content script and forward to frontend
+  if (message.status) {
+    console.log("📢 Status update:", message.status);
+    
+    // Forward status to all tabs (including index.js if it's listening)
+    chrome.tabs.query({}, (tabs) => {
+      tabs.forEach(tab => {
+        chrome.tabs.sendMessage(tab.id, {
+          greeting: "statusUpdate",
+          status: message.status,
+          timestamp: new Date().toISOString()
+        }, () => {
+          // Ignore errors - not all tabs will have listeners
+          if (chrome.runtime.lastError) {
+            // Silently handle the error
+          }
+        });
+      });
+    });
+    
+    sendResponse({ status: "received" });
+    return true;
+  }
+
   // Handle unknown actions
   console.warn("Unknown message action:", message.action);
   sendResponse({ status: "error", message: "Unknown action" });
