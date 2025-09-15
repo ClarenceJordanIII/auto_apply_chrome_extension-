@@ -1,125 +1,150 @@
 <!DOCTYPE html>
 <html lang="en">
-<head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>Chrome Extension</title>
     <script type="module" src="index.js" defer></script>
-    <link rel="stylesheet" href="styles.css">
-   
-</head>
-<body>
-
+    <link rel="stylesheet" href="styles.css" />
+  </head>
+  <body>
     <div class="timeline-container">
-        <div class="header">
-            <h1>Job Application Status</h1>
-            <p>Buy me a coffee</p>
-        </div>
-        
-        <!-- start / continue btn -->
-         <div class="button-container">
-          <button id="start-btn" class="start-btn ">Start &#10003;</button>
-           <button id="stop-btn" class="stop-btn ">Stop &#10005;</button>
-         </div>
-        <!-- Status Display for Live Updates -->
+      <div class="header">
+        <h1>Job Application Status</h1>
+        <p>Buy me a coffee</p>
+      </div>
 
-        <div class="status-section">
-            <div class="status-item">
-                <div class="status-message info">
-                    LIVE STATUS 
-                    <span id="status-indicator-red" class="status-dot red" style="display: none;"></span>
-                    <span id="status-indicator-grey" class="status-dot grey"></span>
-                </div>
-            </div>
-            <div class="status-item">
-                <div id="status" class="status-message">
-                    Ready for job applications...
-                </div>
-            </div>
-            <div class="status-item">
-                <div id="status-time" class="status-message" style="font-size: 12px; color: #6b7280;"></div>
-            </div>
+      <!-- start / continue btn -->
+      <div class="button-container">
+        <button id="start-btn" class="start-btn">Start &#10003;</button>
+        <button id="stop-btn" class="stop-btn">Stop &#10005;</button>
+      </div>
+      <!-- Status Display for Live Updates -->
+      <div class="status-section">
+        <div class="status-item">
+          <div class="status-message info">
+            LIVE STATUS
+            <span
+              id="status-indicator-red"
+              class="status-dot red"
+              style="display: none"
+            ></span>
+            <span id="status-indicator-grey" class="status-dot grey"></span>
+          </div>
         </div>
-
+        <div class="status-item">
+          <div id="status" class="status-message">
+            Ready for job applications...
+          </div>
+        </div>
+        <div class="status-item">
+          <div
+            id="status-time"
+            class="status-message"
+            style="font-size: 12px; color: #6b7280"
+          ></div>
+        </div>
+      </div>
+      <div class="feed-container" id="feed-container">
         <!-- Applied to Front End Developer -->
         <div class="timeline-item">
-            <div class="timeline-icon gray">
-                <svg viewBox="0 0 20 20">
-                    <path fill-rule="evenodd" d="M10 9a3 3 0 100-6 3 3 0 000 6zm-7 9a7 7 0 1114 0H3z" clip-rule="evenodd" />
-                </svg>
+          <div class="timeline-icon gray">
+            <svg viewBox="0 0 20 20">
+              <path
+                fill-rule="evenodd"
+                d="M10 9a3 3 0 100-6 3 3 0 000 6zm-7 9a7 7 0 1114 0H3z"
+                clip-rule="evenodd"
+              />
+            </svg>
+          </div>
+          <div class="timeline-line"></div>
+          <div class="timeline-content">
+            <div class="timeline-text">
+              Applied to <span class="strong">Front End Developer</span>
             </div>
-            <div class="timeline-line"></div>
-            <div class="timeline-content">
-                <div class="timeline-text">
-                    Applied to <span class="strong">Front End Developer</span>
-                </div>
-                <div class="timeline-date">Sep 20</div>
-            </div>
+            <div class="timeline-date">Sep 20</div>
+          </div>
         </div>
 
         <!-- Advanced to phone screening -->
         <div class="timeline-item">
-            <div class="timeline-icon blue">
-                <svg viewBox="0 0 20 20">
-                    <path d="M2 10.5a1.5 1.5 0 113 0v6a1.5 1.5 0 01-3 0v-6zM6 10.333v5.43a2 2 0 001.106 1.79l.05.025A4 4 0 008.943 18h5.416a2 2 0 001.962-1.608l1.2-6A2 2 0 0015.56 8H12V4a2 2 0 00-2-2 1 1 0 00-1 1v.667a4 4 0 01-.8 2.4L6.8 7.933a4 4 0 00-.8 2.4z" />
-                </svg>
+          <div class="timeline-icon blue">
+            <svg viewBox="0 0 20 20">
+              <path
+                d="M2 10.5a1.5 1.5 0 113 0v6a1.5 1.5 0 01-3 0v-6zM6 10.333v5.43a2 2 0 001.106 1.79l.05.025A4 4 0 008.943 18h5.416a2 2 0 001.962-1.608l1.2-6A2 2 0 0015.56 8H12V4a2 2 0 00-2-2 1 1 0 00-1 1v.667a4 4 0 01-.8 2.4L6.8 7.933a4 4 0 00-.8 2.4z"
+              />
+            </svg>
+          </div>
+          <div class="timeline-line"></div>
+          <div class="timeline-content">
+            <div class="timeline-text">
+              Advanced to phone screening by
+              <span class="strong">Bethany Blake</span>
             </div>
-            <div class="timeline-line"></div>
-            <div class="timeline-content">
-                <div class="timeline-text">
-                    Advanced to phone screening by <span class="strong">Bethany Blake</span>
-                </div>
-                <div class="timeline-date">Sep 22</div>
-            </div>
+            <div class="timeline-date">Sep 22</div>
+          </div>
         </div>
 
         <!-- Completed phone screening -->
         <div class="timeline-item">
-            <div class="timeline-icon green">
-                <svg viewBox="0 0 20 20">
-                    <path fill-rule="evenodd" d="M16.707 5.293a1 1 0 010 1.414l-8 8a1 1 0 01-1.414 0l-4-4a1 1 0 011.414-1.414L8 12.586l7.293-7.293a1 1 0 011.414 0z" clip-rule="evenodd" />
-                </svg>
+          <div class="timeline-icon green">
+            <svg viewBox="0 0 20 20">
+              <path
+                fill-rule="evenodd"
+                d="M16.707 5.293a1 1 0 010 1.414l-8 8a1 1 0 01-1.414 0l-4-4a1 1 0 011.414-1.414L8 12.586l7.293-7.293a1 1 0 011.414 0z"
+                clip-rule="evenodd"
+              />
+            </svg>
+          </div>
+          <div class="timeline-line"></div>
+          <div class="timeline-content">
+            <div class="timeline-text">
+              Completed phone screening with
+              <span class="strong">Martha Gardner</span>
             </div>
-            <div class="timeline-line"></div>
-            <div class="timeline-content">
-                <div class="timeline-text">
-                    Completed phone screening with <span class="strong">Martha Gardner</span>
-                </div>
-                <div class="timeline-date">Sep 28</div>
-            </div>
+            <div class="timeline-date">Sep 28</div>
+          </div>
         </div>
 
         <!-- Advanced to interview -->
         <div class="timeline-item">
-            <div class="timeline-icon blue">
-                <svg viewBox="0 0 20 20">
-                    <path d="M2 10.5a1.5 1.5 0 113 0v6a1.5 1.5 0 01-3 0v-6zM6 10.333v5.43a2 2 0 001.106 1.79l.05.025A4 4 0 008.943 18h5.416a2 2 0 001.962-1.608l1.2-6A2 2 0 0015.56 8H12V4a2 2 0 00-2-2 1 1 0 00-1 1v.667a4 4 0 01-.8 2.4L6.8 7.933a4 4 0 00-.8 2.4z" />
-                </svg>
+          <div class="timeline-icon blue">
+            <svg viewBox="0 0 20 20">
+              <path
+                d="M2 10.5a1.5 1.5 0 113 0v6a1.5 1.5 0 01-3 0v-6zM6 10.333v5.43a2 2 0 001.106 1.79l.05.025A4 4 0 008.943 18h5.416a2 2 0 001.962-1.608l1.2-6A2 2 0 0015.56 8H12V4a2 2 0 00-2-2 1 1 0 00-1 1v.667a4 4 0 01-.8 2.4L6.8 7.933a4 4 0 00-.8 2.4z"
+              />
+            </svg>
+          </div>
+          <div class="timeline-line"></div>
+          <div class="timeline-content">
+            <div class="timeline-text">
+              Advanced to interview by <span class="strong">Bethany Blake</span>
             </div>
-            <div class="timeline-line"></div>
-            <div class="timeline-content">
-                <div class="timeline-text">
-                    Advanced to interview by <span class="strong">Bethany Blake</span>
-                </div>
-                <div class="timeline-date">Sep 30</div>
-            </div>
+            <div class="timeline-date">Sep 30</div>
+          </div>
         </div>
 
         <!-- Completed interview (last item - no timeline-line) -->
         <div class="timeline-item">
-            <div class="timeline-icon green">
-                <svg viewBox="0 0 20 20">
-                    <path fill-rule="evenodd" d="M16.707 5.293a1 1 0 010 1.414l-8 8a1 1 0 01-1.414 0l-4-4a1 1 0 011.414-1.414L8 12.586l7.293-7.293a1 1 0 011.414 0z" clip-rule="evenodd" />
-                </svg>
+          <div class="timeline-icon green">
+            <svg viewBox="0 0 20 20">
+              <path
+                fill-rule="evenodd"
+                d="M16.707 5.293a1 1 0 010 1.414l-8 8a1 1 0 01-1.414 0l-4-4a1 1 0 011.414-1.414L8 12.586l7.293-7.293a1 1 0 011.414 0z"
+                clip-rule="evenodd"
+              />
+            </svg>
+          </div>
+          <!-- No timeline-line for last item -->
+          <div class="timeline-content">
+            <div class="timeline-text">
+              Completed interview with
+              <span class="strong">Katherine Snyder</span>
             </div>
-            <!-- No timeline-line for last item -->
-            <div class="timeline-content">
-                <div class="timeline-text">
-                    Completed interview with <span class="strong">Katherine Snyder</span>
-                </div>
-                <div class="timeline-date">Oct 4</div>
-            </div>
+            <div class="timeline-date">Oct 4</div>
+          </div>
         </div>
+      </div>
     </div>
-</body>
+  </body>
 </html>
