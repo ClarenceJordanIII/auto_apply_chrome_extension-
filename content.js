@@ -5,6 +5,7 @@
 // ⚠️ DOMAIN CHECK - Only run on Indeed websites
 // Use var instead of const to allow redeclaration on extension reload
 if (typeof ALLOWED_DOMAINS === 'undefined') {
+  // needs to be global 
   var ALLOWED_DOMAINS = [
     'indeed.com',
     'www.indeed.com',
@@ -14,13 +15,15 @@ if (typeof ALLOWED_DOMAINS === 'undefined') {
     'www.indeed.co.uk'
   ];
 }
+let currentDomain = null
+let isIndeedSite = null
 
 // Prevent redeclaration errors on extension reload
 if (typeof currentDomain === 'undefined') {
-  var currentDomain = window.location.hostname.toLowerCase();
+   currentDomain = window.location.hostname.toLowerCase();
 }
 if (typeof isIndeedSite === 'undefined') {
-  var isIndeedSite = ALLOWED_DOMAINS.some(domain => currentDomain.includes(domain));
+   isIndeedSite = ALLOWED_DOMAINS.some(domain => currentDomain.includes(domain));
 }
 
 if (!isIndeedSite) {
