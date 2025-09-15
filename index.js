@@ -26,6 +26,7 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
 
 const statusIndicatorRed = document.getElementById('status-indicator-red');
 const statusIndicatorGrey = document.getElementById('status-indicator-grey');
+const statusElement = document.getElementById('status');
 
 //  toggle live status indicator
 const liveTogle = (flag) =>{
@@ -33,11 +34,13 @@ const liveTogle = (flag) =>{
   if (flag) {
     statusIndicatorRed.style.display = 'inline-block';
     statusIndicatorGrey.style.display = 'none';
+     statusElement.textContent = 'Currently applying .....';
   } 
   // turns off live status indicator
   else {
     statusIndicatorRed.style.display = 'none';
     statusIndicatorGrey.style.display = 'inline-block';
+   
   }
 }
 

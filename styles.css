@@ -2,6 +2,42 @@
    CHROME EXTENSION POPUP STYLES
    ===================================================== */
 
+/* ==================== CSS VARIABLES ==================== */
+:root {
+    /* Primary Colors */
+    --color-primary-blue: #3b82f6;
+    --color-primary-green: #10b981;
+    --color-primary-red: #ef4444;
+    --color-primary-orange: #f59e0b;
+    
+    /* Neutral Colors */
+    --color-gray-50: #f8f9fa;
+    --color-gray-300: #e5e7eb;
+    --color-gray-400: #9ca3af;
+    --color-gray-500: #6b7280;
+    --color-gray-600: #374151;
+    --color-gray-800: #111827;
+    
+    /* Background Colors */
+    --color-bg-light: #f8f9fa;
+    --color-bg-white: #ffffff;
+    
+    /* Status Colors */
+    --color-success: var(--color-primary-green);
+    --color-error: var(--color-primary-red);
+    --color-info: var(--color-primary-blue);
+    --color-warning: var(--color-primary-orange);
+    
+    /* Timeline State Colors */
+    --color-timeline-pending: var(--color-gray-500);
+    --color-timeline-progress: var(--color-primary-blue);
+    --color-timeline-complete: var(--color-primary-green);
+    
+    /* Status Indicator Colors */
+    --color-status-running: var(--color-primary-red);
+    --color-status-stopped: var(--color-gray-400);
+}
+
 /* ==================== RESET & BASE ==================== */
 * {
     margin: 0;
@@ -14,7 +50,7 @@ body {
     width: 350px;
     min-height: 400px;
     font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
-    background: #f8f9fa;
+    background: var(--color-bg-light);
     padding: 16px;
 }
 
@@ -27,20 +63,20 @@ body {
 .header h1 {
     font-size: 18px;
     font-weight: 600;
-    color: #111827;
+    color: var(--color-gray-800);
     margin-bottom: 4px;
 }
 
 .header p {
     font-size: 14px;
-    color: #6b7280;
+    color: var(--color-gray-500);
 }
 
 /* ==================== STATUS SECTION ==================== */
 /* Live status display with indicator dots */
 .status-section {
     margin-top: 20px;
-    background: white;
+    background: var(--color-bg-white);
     border-radius: 8px;
     padding: 16px;
     box-shadow: 0 2px 8px rgba(0,0,0,0.1);
@@ -59,15 +95,15 @@ body {
 
 /* Status message text styling */
 .status-message {
-    color: #374151;
+    color: var(--color-gray-600);
     line-height: 1.4;
 }
 
 /* Status message color variants */
-.status-message.success { color: #10b981; } /* Green */
-.status-message.error   { color: #ef4444; } /* Red */
-.status-message.info    { color: #3b82f6; } /* Blue */
-.status-message.warning { color: #f59e0b; } /* Orange */
+.status-message.success { color: var(--color-success); } /* Green */
+.status-message.error   { color: var(--color-error); }   /* Red */
+.status-message.info    { color: var(--color-info); }    /* Blue */
+.status-message.warning { color: var(--color-warning); } /* Orange */
 
 /* Status indicator dots (red/grey circles) */
 .status-dot {
@@ -78,13 +114,13 @@ body {
     margin-left: 8px;
 }
 
-.status-dot.red  { background-color: #ef4444; } /* Running state */
-.status-dot.grey { background-color: #9ca3af; } /* Stopped state */
+.status-dot.red  { background-color: var(--color-status-running); } /* Running state */
+.status-dot.grey { background-color: var(--color-status-stopped); } /* Stopped state */
 
 /* ==================== TIMELINE SECTION ==================== */
 /* Main timeline container with white background */
 .timeline-container {
-    background: white;
+    background: var(--color-bg-white);
     border-radius: 8px;
     padding: 20px;
     box-shadow: 0 2px 8px rgba(0,0,0,0.1);
@@ -116,9 +152,9 @@ body {
 }
 
 /* Timeline icon color variants */
-.timeline-icon.gray  { background: #6b7280; } /* Pending/Initial */
-.timeline-icon.blue  { background: #3b82f6; } /* In Progress */
-.timeline-icon.green { background: #10b981; } /* Completed */
+.timeline-icon.gray  { background: var(--color-timeline-pending); } /* Pending/Initial */
+.timeline-icon.blue  { background: var(--color-timeline-progress); } /* In Progress */
+.timeline-icon.green { background: var(--color-timeline-complete); } /* Completed */
 
 /* SVG icons inside timeline circles */
 .timeline-icon svg {
@@ -134,7 +170,7 @@ body {
     top: 24px;         /* Start below icon */
     width: 2px;
     height: 20px;
-    background: #e5e7eb;
+    background: var(--color-gray-300);
 }
 
 /* Timeline text content area */
@@ -145,19 +181,59 @@ body {
 
 .timeline-text {
     font-size: 14px;
-    color: #374151;
+    color: var(--color-gray-600);
     line-height: 1.4;
     margin-bottom: 2px;
 }
 
 .timeline-date {
     font-size: 12px;
-    color: #6b7280;
+    color: var(--color-gray-500);
 }
 
 /* ==================== UTILITY CLASSES ==================== */
 /* Bold text emphasis (used for names, titles) */
 .strong {
     font-weight: 600;
-    color: #111827;
+    color: var(--color-gray-800);
+}
+
+/* ==================== BUTTON STYLES ==================== */
+.start-btn {
+   /* Blue background */
+   background-color: var(--color-primary-green);
+    color: white;              /* White text */
+    border: none;
+    border-radius: 6px;
+    padding: 10px 16px;
+    font-size: 14px;
+    cursor: pointer;
+    transition: background-color 0.3s ease;
+    margin-bottom: 16px;
+}
+.stop-btn {
+   /* Blue background */
+   background-color: var(--color-primary-red);
+    color: white;              /* White text */
+    border: none;
+    border-radius: 6px;
+    padding: 10px 16px;
+    font-size: 14px;
+    cursor: pointer;
+    transition: background-color 0.3s ease;
+    margin-bottom: 16px;
+}
+.start-btn:hover {
+   /* Darker blue on hover */
+   background-color: #2563eb;
+}
+.stop-btn:hover {
+   /* Darker red on hover */
+   background-color: #dc2626;
+}
+.button-container {
+    display: flex;
+    justify-content: space-evenly;
+    text-align: center;
+    margin-bottom: 16px;
 }
