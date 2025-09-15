@@ -21,3 +21,24 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
   }
 });
 
+
+
+
+const statusIndicatorRed = document.getElementById('status-indicator-red');
+const statusIndicatorGrey = document.getElementById('status-indicator-grey');
+
+//  toggle live status indicator
+const liveTogle = (flag) =>{
+// turns on live status indicator
+  if (flag) {
+    statusIndicatorRed.style.display = 'inline-block';
+    statusIndicatorGrey.style.display = 'none';
+  } 
+  // turns off live status indicator
+  else {
+    statusIndicatorRed.style.display = 'none';
+    statusIndicatorGrey.style.display = 'inline-block';
+  }
+}
+
+liveTogle(true)
