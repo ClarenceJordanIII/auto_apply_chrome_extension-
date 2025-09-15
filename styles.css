@@ -1,141 +1,163 @@
-      * {
-            margin: 0;
-            padding: 0;
-            box-sizing: border-box;
-        }
-        
-        body {
-            width: 350px;
-            min-height: 400px;
-            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
-            background: #f8f9fa;
-            padding: 16px;
-        }
-        
-        .timeline-container {
-            background: white;
-            border-radius: 8px;
-            padding: 20px;
-            box-shadow: 0 2px 8px rgba(0,0,0,0.1);
-        }
-        
-        .timeline-item {
-            display: flex;
-            margin-bottom: 20px;
-            position: relative;
-        }
-        
-        .timeline-item:last-child {
-            margin-bottom: 0;
-        }
-        
-        .timeline-icon {
-            width: 24px;
-            height: 24px;
-            border-radius: 50%;
-            display: flex;
-            align-items: center;
-            justify-content: center;
-            margin-right: 12px;
-            flex-shrink: 0;
-            position: relative;
-            z-index: 1;
-        }
-        
-        .timeline-icon.gray { background: #6b7280; }
-        .timeline-icon.blue { background: #3b82f6; }
-        .timeline-icon.green { background: #10b981; }
-        
-        .timeline-icon svg {
-            width: 14px;
-            height: 14px;
-            fill: white;
-        }
-        
-        .timeline-line {
-            position: absolute;
-            left: 11px;
-            top: 24px;
-            width: 2px;
-            height: 20px;
-            background: #e5e7eb;
-        }
-        
-        .timeline-content {
-            flex: 1;
-            padding-top: 2px;
-        }
-        
-        .timeline-text {
-            font-size: 14px;
-            color: #374151;
-            line-height: 1.4;
-            margin-bottom: 2px;
-        }
-        
-        .timeline-date {
-            font-size: 12px;
-            color: #6b7280;
-        }
-        
-        .strong {
-            font-weight: 600;
-            color: #111827;
-        }
-        
-        .header {
-            text-align: center;
-            margin-bottom: 20px;
-        }
-        
-        .header h1 {
-            font-size: 18px;
-            font-weight: 600;
-            color: #111827;
-            margin-bottom: 4px;
-        }
-        
-        .header p {
-            font-size: 14px;
-            color: #6b7280;
-        }
-        
-        .status-section {
-            margin-top: 20px;
-            background: white;
-            border-radius: 8px;
-            padding: 16px;
-            box-shadow: 0 2px 8px rgba(0,0,0,0.1);
-        }
-        
-        .status-item {
-            display: flex;
-            align-items: center;
-            margin-bottom: 8px;
-            font-size: 14px;
-        }
-        
-        .status-item:last-child {
-            margin-bottom: 0;
-        }
-        
-        .status-message {
-            color: #374151;
-            line-height: 1.4;
-        }
-        
-        .status-message.success {
-            color: #10b981;
-        }
-        
-        .status-message.error {
-            color: #ef4444;
-        }
-        
-        .status-message.info {
-            color: #3b82f6;
-        }
-        
-        .status-message.warning {
-            color: #f59e0b;
-        }
+/* =====================================================
+   CHROME EXTENSION POPUP STYLES
+   ===================================================== */
+
+/* ==================== RESET & BASE ==================== */
+* {
+    margin: 0;
+    padding: 0;
+    box-sizing: border-box;
+}
+
+/* Chrome Extension Popup Container - Fixed 350px width */
+body {
+    width: 350px;
+    min-height: 400px;
+    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+    background: #f8f9fa;
+    padding: 16px;
+}
+
+/* ==================== HEADER SECTION ==================== */
+.header {
+    text-align: center;
+    margin-bottom: 20px;
+}
+
+.header h1 {
+    font-size: 18px;
+    font-weight: 600;
+    color: #111827;
+    margin-bottom: 4px;
+}
+
+.header p {
+    font-size: 14px;
+    color: #6b7280;
+}
+
+/* ==================== STATUS SECTION ==================== */
+/* Live status display with indicator dots */
+.status-section {
+    margin-top: 20px;
+    background: white;
+    border-radius: 8px;
+    padding: 16px;
+    box-shadow: 0 2px 8px rgba(0,0,0,0.1);
+}
+
+.status-item {
+    display: flex;
+    align-items: center;
+    margin-bottom: 8px;
+    font-size: 14px;
+}
+
+.status-item:last-child {
+    margin-bottom: 0;
+}
+
+/* Status message text styling */
+.status-message {
+    color: #374151;
+    line-height: 1.4;
+}
+
+/* Status message color variants */
+.status-message.success { color: #10b981; } /* Green */
+.status-message.error   { color: #ef4444; } /* Red */
+.status-message.info    { color: #3b82f6; } /* Blue */
+.status-message.warning { color: #f59e0b; } /* Orange */
+
+/* Status indicator dots (red/grey circles) */
+.status-dot {
+    display: inline-block;
+    width: 8px;
+    height: 8px;
+    border-radius: 50%;
+    margin-left: 8px;
+}
+
+.status-dot.red  { background-color: #ef4444; } /* Running state */
+.status-dot.grey { background-color: #9ca3af; } /* Stopped state */
+
+/* ==================== TIMELINE SECTION ==================== */
+/* Main timeline container with white background */
+.timeline-container {
+    background: white;
+    border-radius: 8px;
+    padding: 20px;
+    box-shadow: 0 2px 8px rgba(0,0,0,0.1);
+}
+
+/* Individual timeline item (horizontal flex layout) */
+.timeline-item {
+    display: flex;
+    margin-bottom: 20px;
+    position: relative;
+}
+
+.timeline-item:last-child {
+    margin-bottom: 0;
+}
+
+/* Timeline icon (circular with SVG inside) */
+.timeline-icon {
+    width: 24px;
+    height: 24px;
+    border-radius: 50%;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    margin-right: 12px;
+    flex-shrink: 0;
+    position: relative;
+    z-index: 1;
+}
+
+/* Timeline icon color variants */
+.timeline-icon.gray  { background: #6b7280; } /* Pending/Initial */
+.timeline-icon.blue  { background: #3b82f6; } /* In Progress */
+.timeline-icon.green { background: #10b981; } /* Completed */
+
+/* SVG icons inside timeline circles */
+.timeline-icon svg {
+    width: 14px;
+    height: 14px;
+    fill: white;
+}
+
+/* Vertical connecting line between timeline items */
+.timeline-line {
+    position: absolute;
+    left: 11px;        /* Center align with icon */
+    top: 24px;         /* Start below icon */
+    width: 2px;
+    height: 20px;
+    background: #e5e7eb;
+}
+
+/* Timeline text content area */
+.timeline-content {
+    flex: 1;
+    padding-top: 2px;
+}
+
+.timeline-text {
+    font-size: 14px;
+    color: #374151;
+    line-height: 1.4;
+    margin-bottom: 2px;
+}
+
+.timeline-date {
+    font-size: 12px;
+    color: #6b7280;
+}
+
+/* ==================== UTILITY CLASSES ==================== */
+/* Bold text emphasis (used for names, titles) */
+.strong {
+    font-weight: 600;
+    color: #111827;
+}

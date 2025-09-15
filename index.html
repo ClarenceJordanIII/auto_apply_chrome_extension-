@@ -6,6 +6,7 @@
     <title>Chrome Extension</title>
     <script type="module" src="index.js" defer></script>
     <link rel="stylesheet" href="styles.css">
+   
 </head>
 <body>
     <div class="timeline-container">
@@ -15,13 +16,24 @@
         </div>
         
         <!-- Status Display for Live Updates -->
-        <div id="status-section" class="status-section">
-            <div class="status-label">LIVE STATUS</div>
-            <div id="status" class="status-text">
-                Ready for job applications...
+        <div class="status-section">
+            <div class="status-item">
+                <div class="status-message info">
+                    LIVE STATUS 
+                    <span id="status-indicator-red" class="status-dot red" style="display: none;"></span>
+                    <span id="status-indicator-grey" class="status-dot grey"></span>
+                </div>
             </div>
-            <div id="status-time" class="status-time"></div>
+            <div class="status-item">
+                <div id="status" class="status-message">
+                    Ready for job applications...
+                </div>
+            </div>
+            <div class="status-item">
+                <div id="status-time" class="status-message" style="font-size: 12px; color: #6b7280;"></div>
+            </div>
         </div>
+
         <!-- Applied to Front End Developer -->
         <div class="timeline-item">
             <div class="timeline-icon gray">
@@ -86,14 +98,14 @@
             </div>
         </div>
 
-        <!-- Completed interview -->
+        <!-- Completed interview (last item - no timeline-line) -->
         <div class="timeline-item">
             <div class="timeline-icon green">
                 <svg viewBox="0 0 20 20">
                     <path fill-rule="evenodd" d="M16.707 5.293a1 1 0 010 1.414l-8 8a1 1 0 01-1.414 0l-4-4a1 1 0 011.414-1.414L8 12.586l7.293-7.293a1 1 0 011.414 0z" clip-rule="evenodd" />
                 </svg>
             </div>
-            <!-- No line for last item -->
+            <!-- No timeline-line for last item -->
             <div class="timeline-content">
                 <div class="timeline-text">
                     Completed interview with <span class="strong">Katherine Snyder</span>
