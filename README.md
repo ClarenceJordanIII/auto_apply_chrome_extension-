@@ -269,7 +269,7 @@ If this extension helped you with your job search, consider:
 - 🐛 Reporting issues
 - 💡 Suggesting improvements
 - by me coffee coming soon
-<!-- - ☕ [Buy me a coffee](https://buymeacoffee.com/yourhandle) -->
+- ☕ [Buy me a coffee](https://buymeacoffee.com/tek_drift)
 
 ---
 
