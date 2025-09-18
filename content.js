@@ -2017,7 +2017,8 @@ if (!isIndeedSite) {
 
   // Initialize the learning system
   window.questionLearningSystem = new QuestionLearningSystem();
-
+// ENTERY PONT 
+// Starting point
   const startIndeed = () => {
     chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
       if (message.action === "startProcess") {

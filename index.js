@@ -46,6 +46,7 @@ const liveTogle = (flag) =>{
 
 const startBtn = document.getElementById('start-btn');
 const stopBtn = document.getElementById('stop-btn');
+// Start button event listener
 startBtn.addEventListener("click", (e) => {
   if (e.target && e.target.id === 'start-btn') {
     console.log("Start button clicked");
@@ -66,7 +67,7 @@ startBtn.addEventListener("click", (e) => {
     });
   }
 });
-
+// Stop button event listener
 stopBtn.addEventListener("click", (e) => {
   if (e.target && e.target.id === 'stop-btn') {
     console.log("Stop button clicked");
