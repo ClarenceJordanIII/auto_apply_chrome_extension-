@@ -28,7 +28,9 @@ if (typeof isIndeedSite === "undefined") {
 
 if (!isIndeedSite) {
   console.log(`🚫 Extension disabled - Not an Indeed site (${currentDomain})`);
-  sendStatusMessage(`🚫 Extension disabled - Not an Indeed site (${currentDomain})`)
+  sendStatusMessage(
+    `🚫 Extension disabled - Not an Indeed site (${currentDomain})`
+  );
 } else {
   // ⚡ MAIN EXTENSION CODE - Only runs on Indeed sites
   console.log("🚀 Content script loaded on Indeed - preventing cache...");
@@ -2017,34 +2019,46 @@ if (!isIndeedSite) {
   window.questionLearningSystem = new QuestionLearningSystem();
 
   const startIndeed = () => {
-    startScriptButton();
+    chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
+      if (message.action === "startProcess") {
+        console.log(message.action);
 
-    // non searching page
-    const getJobCards = document.getElementById("mosaic-provider-jobcards-1");
-    // searching page
-    const searchJobCards = document.getElementById("mosaic-jobResults");
-    // make conditional to check which page we are on
-    const btn = document.getElementById("startbtn");
+        // ✅ Define the elements here when the message is received
+        const getJobCards = document.getElementById(
+          "mosaic-provider-jobcards-1"
+        );
+        const searchJobCards = document.getElementById("mosaic-jobResults");
 
-    btn.addEventListener("click", () => {
-      // Log the job cards container
-      console.log(getJobCards);
+        console.log("getJobCards:", getJobCards);
+        console.log("searchJobCards:", searchJobCards);
 
-      // Dynamically get job card data
-      // Search vs non search page logic
-      if (getJobCards) {
-        // if they don't search for a job ( scrapes the home page)
-        jobCardScrape(getJobCards);
-      } else if (searchJobCards) {
-        // if they search for a job (scrapes the search results page)
-        autoScrollToBottom(() => {
-          console.log("You have hit the bottom of the webpage!");
-          jobCardScrape(searchJobCards);
-        });
+        if (getJobCards) {
+          // if they don't search for a job (scrapes the home page)
+          console.log("Found home page job cards, starting scrape...");
+          jobCardScrape(getJobCards);
+        } else if (searchJobCards) {
+          // if they search for a job (scrapes the search results page)
+          console.log(
+            "Found search page job cards, starting scroll and scrape..."
+          );
+          autoScrollToBottom(() => {
+            console.log("You have hit the bottom of the webpage!");
+            jobCardScrape(searchJobCards);
+          });
+        } else {
+          console.log("❌ No job cards found on this page");
+          console.log("Current URL:", window.location.href);
+
+          // Send response back indicating no jobs found
+          sendResponse({
+            status: "no_jobs_found",
+            message: "No job cards detected on current page",
+          });
+        }
+
+        return true; // Keep message channel open for async operations
       }
     });
-    // searching page logic
-    // mosaic-jobResults search id
   };
 
   function indeedMain() {
@@ -2564,7 +2578,9 @@ if (!isIndeedSite) {
     if (message.action === "applyJob" && message.job) {
       console.log("📨 Received applyJob message, starting async processing...");
       console.log("🚀 Starting job application workflow");
-      sendStatusMessage(`🚀 Starting application for: ${message.job.jobTitle} at ${message.job.companyName}`);
+      sendStatusMessage(
+        `🚀 Starting application for: ${message.job.jobTitle} at ${message.job.companyName}`
+      );
 
       // ═══════════════════════════════════════════════════════════════════════════
       // 🚀 MAIN JOB APPLICATION WORKFLOW - MULTI-STEP PROCESS
@@ -2605,7 +2621,9 @@ if (!isIndeedSite) {
           if (!job.jobId) {
             console.error("Job missing required jobId:", job);
             console.log("❌ Job validation failed");
-            sendStatusMessage("❌ Job validation failed - missing required data");
+            sendStatusMessage(
+              "❌ Job validation failed - missing required data"
+            );
             if (isExtensionContextValid()) {
               try {
                 chrome.runtime.sendMessage({
@@ -2639,9 +2657,9 @@ if (!isIndeedSite) {
             // ═══════════════════════════════════════════════════════════════════════════
             console.log("🔄 Running dynamic application workflow");
             sendStatusMessage("🔄 Navigating to application form...");
-            
+
             result = await runDynamicApplicationWorkflow();
-            
+
             console.log(`📊 Workflow completed with result: ${result}`);
             sendStatusMessage(`📊 Application workflow completed: ${result}`);
           } catch (err) {
@@ -2658,11 +2676,13 @@ if (!isIndeedSite) {
           // STEP 6: REPORT RESULTS - Send final result back to background script
           // ─────────────────────────────────────────────────────────────────────────
           console.log(`📊 Final Result for ${job.jobTitle}: ${result}`);
-          
+
           if (result === "pass" || result === "pass_no_forms_needed") {
             sendStatusMessage(`✅ Job application successful: ${job.jobTitle}`);
           } else {
-            sendStatusMessage(`❌ Job application failed: ${job.jobTitle} - ${result}`);
+            sendStatusMessage(
+              `❌ Job application failed: ${job.jobTitle} - ${result}`
+            );
           }
 
           // Function to safely send job result with retry logic
@@ -4934,13 +4954,19 @@ if (!isIndeedSite) {
       console.log("📍 Step 2: Processing application forms");
       sendStatusMessage("📍 Step 2: Processing application forms");
       const workflowResult = await runUnlimitedWorkflowLoop();
-      sendStatusMessage(`✅ Step 2 completed: ${workflowResult ? 'Success' : 'Failed'}`);
+      sendStatusMessage(
+        `✅ Step 2 completed: ${workflowResult ? "Success" : "Failed"}`
+      );
 
       // Step 3: Comprehensive success verification
       console.log("📍 Step 3: Verifying application submission");
       sendStatusMessage("📍 Step 3: Verifying application submission");
       const successResult = await checkApplicationSuccess();
-      sendStatusMessage(`✅ Step 3 completed: ${successResult ? 'Verified' : 'Could not verify'}`);
+      sendStatusMessage(
+        `✅ Step 3 completed: ${
+          successResult ? "Verified" : "Could not verify"
+        }`
+      );
 
       // Step 4: Generate detailed result
       const interactionCount = window.formInteractionCount || 0;
@@ -5077,7 +5103,9 @@ if (!isIndeedSite) {
       // Check if we should still be running automation
       if (!shouldRunAutomation()) {
         console.log("🛑 Automation stopped - no longer on valid Indeed page");
-        sendStatusMessage("🛑 Automation stopped - no longer on valid Indeed page");
+        sendStatusMessage(
+          "🛑 Automation stopped - no longer on valid Indeed page"
+        );
         return { success: false, reason: "Left valid Indeed page" };
       }
 
@@ -5119,12 +5147,16 @@ if (!isIndeedSite) {
           console.log(
             `⚠️ Page ${pageCount} not processed (failure ${consecutiveFailures}/3)`
           );
-          sendStatusMessage(`⚠️ Page ${pageCount} processing failed (${consecutiveFailures}/3 failures)`);
+          sendStatusMessage(
+            `⚠️ Page ${pageCount} processing failed (${consecutiveFailures}/3 failures)`
+          );
 
           // Try to proceed anyway
           const proceededToNext = await proceedToNextPage();
           if (!proceededToNext) {
-            sendStatusMessage("⚠️ Cannot proceed to next page - attempting completion");
+            sendStatusMessage(
+              "⚠️ Cannot proceed to next page - attempting completion"
+            );
             break;
           }
           await new Promise((r) => setTimeout(r, 2000));
@@ -7403,9 +7435,8 @@ if (!isIndeedSite) {
   });
 } // End of Indeed site check - closes the main conditional block
 
-function sendStatusMessage(message){
-  chrome.runtime.sendMessage({status: message}, function(response) {
+function sendStatusMessage(message) {
+  chrome.runtime.sendMessage({ status: message }, function (response) {
     console.log("Response from background:", response);
-  }
-  )}
-
+  });
+}

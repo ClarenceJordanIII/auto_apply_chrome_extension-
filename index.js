@@ -40,8 +40,49 @@ const liveTogle = (flag) =>{
   else {
     statusIndicatorRed.style.display = 'none';
     statusIndicatorGrey.style.display = 'inline-block';
-   
+    statusElement.textContent = 'Ready for job applications...';
   }
 }
 
-liveTogle(true)
+const startBtn = document.getElementById('start-btn');
+const stopBtn = document.getElementById('stop-btn');
+startBtn.addEventListener("click", (e) => {
+  if (e.target && e.target.id === 'start-btn') {
+    console.log("Start button clicked");
+    liveTogle(true);
+    
+    // Send directly to content script on active tab
+    chrome.tabs.query({active: true, currentWindow: true}, (tabs) => {
+      chrome.tabs.sendMessage(tabs[0].id, {
+        action: "startProcess"
+      }, (response) => {
+        if (chrome.runtime.lastError) {
+          console.error("Error:", chrome.runtime.lastError.message);
+          liveTogle(false); // Reset status on error
+        } else if (response && response.status === "automation_started") {
+          console.log("✅ Automation started successfully");
+        }
+      });
+    });
+  }
+});
+
+stopBtn.addEventListener("click", (e) => {
+  if (e.target && e.target.id === 'stop-btn') {
+    console.log("Stop button clicked");
+    liveTogle(false);
+    
+    // Send stop message to content script
+    chrome.tabs.query({active: true, currentWindow: true}, (tabs) => {
+      chrome.tabs.sendMessage(tabs[0].id, {
+        action: "stopProcess"
+      }, (response) => {
+        if (chrome.runtime.lastError) {
+          console.error("Error:", chrome.runtime.lastError.message);
+        } else {
+          console.log("✅ Automation stopped successfully");
+        }
+      });
+    });
+  }
+});
