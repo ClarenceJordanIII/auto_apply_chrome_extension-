@@ -15,7 +15,10 @@
     "referralSource": "Online job search",
     "salary": "Competitive/Negotiable",
     "previousEmployer": "ABC Company",
-    "supervisor": "John Smith"
+    "supervisor": "John Smith",
+    "experience": "3-5 years",
+    "availability": "Immediately",
+    "motivation": "Interested in this opportunity and believe my skills align well with the role requirements."
   },
   "education": {
     "school": "State University",

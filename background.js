@@ -8,7 +8,7 @@ let processing = false;
 let activeJobTabId = null; // Track the current job tab
 
 const JOB_TIMEOUT = 90000; // 90 seconds per job (reduced from 500 seconds)
-const JOB_THROTTLE = 3000; // 3 seconds between jobs (prevent rate limiting)
+const JOB_THROTTLE = 8000; // 8 seconds between jobs (increased to avoid CAPTCHAs)
 const MAX_RETRIES = 5; // Maximum retry attempts per job
 const MAX_CONCURRENT_TABS = 1; // Only allow 1 job tab at a time
 const MAX_TOTAL_TABS = 10; // Emergency brake - never have more than 10 tabs total
@@ -153,6 +153,40 @@ function logQueueStatus() {
 }
 
 /**
+ * Send completion message to the main Indeed tab
+ */
+function sendCompletionMessageToMainTab(successCount, failedCount, totalCount, successRate) {
+  if (!mainIndeedTabId) {
+    console.log("⚠️ Cannot send completion message - main Indeed tab not found");
+    return;
+  }
+  
+  const completionMessage = {
+    action: "ALL_JOBS_COMPLETE",
+    results: {
+      success: successCount,
+      failed: failedCount,
+      total: totalCount,
+      successRate: successRate + "%",
+      timestamp: new Date().toISOString(),
+      message: failedCount === 0 
+        ? `🎉 PERFECT! All ${totalCount} jobs completed successfully!` 
+        : `✅ DONE! ${successCount}/${totalCount} jobs completed (${successRate}% success rate)`
+    }
+  };
+  
+  console.log("🎯 Sending completion message to main Indeed tab:", completionMessage);
+  
+  chrome.tabs.sendMessage(mainIndeedTabId, completionMessage, (response) => {
+    if (chrome.runtime.lastError) {
+      console.log("📢 Main tab may be closed or navigated away:", chrome.runtime.lastError.message);
+    } else {
+      console.log("✅ Completion message sent successfully");
+    }
+  });
+}
+
+/**
  * Categorize failure types for better debugging and statistics
  */
 function categorizeFailure(result) {
@@ -190,15 +224,27 @@ function categorizeFailure(result) {
 
 // Listen for messages from content.js
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
+  // Handle undefined, null, or invalid messages
+  if (!message || typeof message !== 'object') {
+    console.warn("⚠️ Background received invalid message:", message);
+    sendResponse({ error: 'Invalid message format' });
+    return false;
+  }
+
   try {
-    console.log("Background received message:", message.action);
+    // Log the message action if available
+    if (message.action) {
+      console.log("Background received message:", message.action);
+    } else {
+      console.log("Background received message without action:", Object.keys(message));
+    }
   } catch (error) {
     console.error("Error logging message:", error.message);
   }
   
   // Handle job queue from Indeed page
   if (message.action === "queueJobs" && message.jobs && Array.isArray(message.jobs)) {
-    console.log("Received jobs to queue:", message.jobs.length);
+    console.log("🎯 Received jobs to queue:", message.jobs.length);
     
     // Track the main Indeed tab - this is where jobs came from
     if (sender.tab && sender.tab.id) {
@@ -211,26 +257,118 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     jobQueue = [];
     retryQueue = [];
     failedJobs = [];
+    processing = false; // Reset processing flag
     
     // Add jobs to queue with pending status and retry count
-    jobQueue = message.jobs.map(job => ({ 
+    jobQueue = message.jobs.map((job, index) => ({ 
       ...job, 
       status: "pending",
       retryCount: 0,
-      originalAttemptTime: Date.now()
+      originalAttemptTime: Date.now(),
+      queuePosition: index + 1
     }));
+    
+    console.log(`📋 Queued ${jobQueue.length} jobs for processing:`);
+    jobQueue.forEach((job, i) => {
+      console.log(`  ${i + 1}. ${job.jobTitle} - ${job.company}`);
+    });
     
     sendResponse({ status: "queued", queueLength: jobQueue.length });
     logQueueStatus();
     saveQueueState(); // Save state after adding jobs
-    if (!processing) processNextJob();
+    
+    // Start processing immediately if not already processing
+    if (!processing && jobQueue.length > 0) {
+      console.log("🚀 Starting job processing...");
+      setTimeout(() => {
+        processNextJob();
+      }, 2000); // Small delay to ensure everything is set up
+    }
     return true; // Keep message channel open
+  }
+
+  // Handle CAPTCHA detection from content script
+  if (message.action === "captchaDetected") {
+    console.log("🔒 CAPTCHA detected on job application:", message.captchaInfo);
+    console.log("🛑 Pausing job processing due to CAPTCHA");
+    
+    // Mark current job as CAPTCHA-blocked and retry later
+    if (currentJob) {
+      currentJob.status = "captcha_blocked";
+      currentJob.captchaInfo = message.captchaInfo;
+      currentJob.captchaTimestamp = message.timestamp;
+      
+      console.log(`🔄 Moving job to retry queue due to CAPTCHA: ${currentJob.title}`);
+      
+      // Add to retry queue with longer delay for CAPTCHA
+      retryQueue.push({
+        ...currentJob,
+        retryCount: (currentJob.retryCount || 0) + 1,
+        retryReason: "captcha_detected",
+        nextRetryTime: Date.now() + (JOB_THROTTLE * 5) // Wait 5x longer for CAPTCHA retries
+      });
+    }
+    
+    // Reset processing state
+    processing = false;
+    currentJob = null;
+    
+    // Close the job tab to avoid continued CAPTCHA issues
+    safelyCloseJobTab();
+    
+    // Wait longer before trying next job to let CAPTCHA cool down
+    setTimeout(() => {
+      console.log("🔄 Resuming job processing after CAPTCHA cooldown...");
+      processNextJob();
+    }, JOB_THROTTLE * 3); // Triple delay after CAPTCHA
+    
+    sendResponse({ status: "captcha_handled" });
+    return true;
   }
 
   // Handle job results from content script
   if (message.action === "jobResult") {
-    console.log("Received job result:", message.result, "for job:", message.jobId);
+    console.log("📊 Received job result:", message.result, "for job:", message.jobId);
+    console.log(`📈 Queue status: ${jobQueue.length} remaining, processing: ${processing}`);
     sendResponse({ status: "received" });
+    return true;
+  }
+  
+  // Add manual job processing controls for debugging
+  if (message.action === "getQueueStatus") {
+    console.log("📋 Queue Status Request:");
+    console.log(`  - Job Queue: ${jobQueue.length} jobs`);
+    console.log(`  - Retry Queue: ${retryQueue.length} jobs`);  
+    console.log(`  - Failed Jobs: ${failedJobs.length} jobs`);
+    console.log(`  - Processing: ${processing}`);
+    console.log(`  - Current Job: ${currentJob ? currentJob.jobTitle : 'None'}`);
+    console.log(`  - Active Tab: ${activeJobTabId || 'None'}`);
+    
+    sendResponse({
+      status: "queue_status",
+      jobQueue: jobQueue.length,
+      retryQueue: retryQueue.length,
+      failedJobs: failedJobs.length,
+      processing: processing,
+      currentJob: currentJob ? currentJob.jobTitle : null,
+      activeTabId: activeJobTabId
+    });
+    return true;
+  }
+  
+  if (message.action === "forceProcessNext") {
+    console.log("🔧 Force processing next job requested");
+    if (!processing && jobQueue.length > 0) {
+      setTimeout(() => {
+        processNextJob();
+      }, 1000);
+      sendResponse({ status: "force_started" });
+    } else {
+      sendResponse({ 
+        status: "cannot_force", 
+        reason: processing ? "Already processing" : "No jobs in queue"
+      });
+    }
     return true;
   }
 
@@ -246,6 +384,13 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   // Handle heartbeat to keep connection alive
   if (message.action === 'heartbeat') {
     sendResponse({ status: "alive" });
+    return true;
+  }
+
+  // Handle learning pattern messages (acknowledge but don't process for now)
+  if (message.action === 'saveLearnedPatterns' || message.action === 'patternLearned') {
+    console.log(`📚 Pattern learning message received: ${message.action}`);
+    sendResponse({ status: "acknowledged" });
     return true;
   }
 
@@ -335,6 +480,12 @@ async function safelyCloseJobTab() {
  * Add job to retry queue if it hasn't exceeded max retries
  */
 function addToRetryQueue(job, reason) {
+  // Safety check: ensure job is not null/undefined
+  if (!job) {
+    console.error("❌ Cannot add null/undefined job to retry queue. Reason:", reason);
+    return false;
+  }
+  
   job.retryCount = (job.retryCount || 0) + 1;
   job.lastFailureReason = reason;
   job.lastRetryTime = Date.now();
@@ -355,6 +506,8 @@ function addToRetryQueue(job, reason) {
 
 //  add retry logic for failed jobs 
 async function processNextJob() {
+  console.log(`🔄 processNextJob() called - Queue: ${jobQueue.length}, Processing: ${processing}, ActiveTab: ${activeJobTabId}`);
+  
   // CRASH PREVENTION: Check tab count before processing
   await preventCrash();
   
@@ -366,6 +519,18 @@ async function processNextJob() {
   
   if (activeJobTabId) {
     console.log("⚠️ Job tab still active, waiting for completion...");
+    // Check if the tab actually exists
+    chrome.tabs.get(activeJobTabId, (tab) => {
+      if (chrome.runtime.lastError) {
+        console.log("🧹 Active job tab no longer exists, cleaning up...");
+        activeJobTabId = null;
+        setTimeout(() => {
+          processNextJob();
+        }, 1000);
+      } else {
+        console.log(`🔍 Active job tab ${activeJobTabId} still exists: ${tab.url}`);
+      }
+    });
     return;
   }
   
@@ -379,7 +544,8 @@ async function processNextJob() {
   
   if (jobQueue.length === 0) {
     processing = false;
-    console.log("All jobs processed.");
+    console.log("📭 All jobs processed from main queue.");
+    console.log(`📊 Final counts - Retry queue: ${retryQueue.length}, Failed: ${failedJobs.length}`);
     
     // Ensure no job tab is left open
     await safelyCloseJobTab();
@@ -388,6 +554,7 @@ async function processNextJob() {
       console.log(`🔄 ${retryQueue.length} jobs in retry queue will be processed next cycle.`);
       // Process retry queue
       setTimeout(() => {
+        console.log("🔄 Starting retry queue processing...");
         processNextJob();
       }, JOB_THROTTLE * 2); // Wait a bit longer before retries
       return;
@@ -435,20 +602,41 @@ async function processNextJob() {
         
         console.log("\n" + "─".repeat(50));
         console.log("📊 Report Complete");
+        
+        // Send completion message to main Indeed tab
+        sendCompletionMessageToMainTab(successJobs.length, failedJobs.length, totalJobs, successRate);
+      });
+    } else {
+      // No failed jobs - perfect completion!
+      console.log("🎉 ALL JOBS COMPLETED SUCCESSFULLY!");
+      console.log("✨ FINAL STATUS: DONE - All jobs processed with 100% success rate!");
+      chrome.storage.local.get(['successfulJobs'], (result) => {
+        const successJobs = result.successfulJobs || [];
+        console.log(`📈 COMPLETION SUMMARY: ${successJobs.length} jobs applied successfully!`);
+        sendCompletionMessageToMainTab(successJobs.length, 0, successJobs.length, 100);
       });
     }
     logQueueStatus();
     clearQueueState(); // Clear storage when done
     return;
   }
+  console.log("🚀 Starting to process next job...");
   processing = true;
   currentJob = jobQueue.shift();
   currentJob.status = "processing";
+  
+  const remainingJobs = jobQueue.length;
+  const jobNumber = (currentJob.queuePosition || 'Unknown');
+  
+  console.log(`🎯 Processing job ${jobNumber}: ${currentJob.jobTitle}`);
+  console.log(`📊 Jobs remaining in queue: ${remainingJobs}`);
+  console.log(`🔗 Job URL: ${currentJob.jobLink}`);
+  
   logQueueStatus();
-  console.log(`🚀 Processing job ${jobQueue.length + 1}: ${currentJob.jobTitle}`);
 
   // SAFETY: Close any existing job tab before creating new one
   safelyCloseJobTab().then(() => {
+    console.log("🔧 Creating new job tab...");
     createJobTab();
   });
 }
@@ -508,9 +696,19 @@ function createJobTab() {
         
         currentJob.status = msg.result;
         
+        // Send response immediately to prevent channel closing
+        if (resp) {
+          try {
+            resp({ status: "received", timestamp: Date.now() });
+          } catch (error) {
+            console.log("📡 Response channel already closed, continuing...");
+          }
+        }
+        
         // Enhanced result categorization with retry logic
         if (msg.result === "pass" || msg.result === "pass_no_forms_needed") {
           console.log("✅ Job succeeded:", currentJob.jobTitle, "- Result:", msg.result);
+          console.log(`📈 Success! ${remainingJobs} jobs remaining in queue`);
           
           // Save successful job to storage
           chrome.storage.local.get(['successfulJobs'], (result) => {
@@ -521,6 +719,7 @@ function createJobTab() {
               finalResult: msg.result
             });
             chrome.storage.local.set({ successfulJobs });
+            console.log(`💾 Saved successful job. Total successes: ${successfulJobs.length + 1}`);
           });
         } else {
           // Try to retry the job first
@@ -532,6 +731,8 @@ function createJobTab() {
             console.log("❌ Job permanently failed:", currentJob.jobTitle, "- Final reason:", msg.result);
           }
         }
+        
+        console.log(`📊 Processing complete. About to continue with remaining jobs...`);
         logQueueStatus();
         
         // Safely close job tab
@@ -539,8 +740,14 @@ function createJobTab() {
         tabClosed = true;
         
         chrome.runtime.onMessage.removeListener(jobResultListener);
-        setTimeout(processNextJob, JOB_THROTTLE);
-        resp({ status: "received" });
+        
+        console.log(`⏭️ Job completed. Waiting ${JOB_THROTTLE}ms before processing next job...`);
+        console.log(`📊 Current status: ${jobQueue.length} jobs remaining, processing flag reset to false`);
+        
+        setTimeout(() => {
+          console.log("⏰ Throttle delay complete, calling processNextJob()");
+          processNextJob();
+        }, JOB_THROTTLE);
       }
     };
     
@@ -570,107 +777,108 @@ function createJobTab() {
               return;
             }
             
-            try {
-              console.log(`📤 Sending job to content script: ${currentJob.jobTitle}`);
-              chrome.tabs.sendMessage(tabId, { action: "applyJob", job: currentJob }, (response) => {
-                if (chrome.runtime.lastError) {
-                  const errorMsg = chrome.runtime.lastError.message;
-                  console.error("❌ Error sending message to tab:", errorMsg);
-                  
-                  // Handle specific error cases
-                  if (errorMsg.includes("back/forward cache") || 
-                      errorMsg.includes("receiving end does not exist") ||
-                      errorMsg.includes("message channel is closed") ||
-                      errorMsg.includes("Extension context invalidated")) {
-                    
-                    if (!jobCompleted) {
-                      console.log("🔄 Extension context lost, attempting recovery...");
-                      jobCompleted = true;
-                      clearTimeout(timeoutId);
-                      chrome.runtime.onMessage.removeListener(jobResultListener);
-                      
-                      // Check if tab still exists and try to reinject content script
-                      chrome.tabs.get(tabId, (tabInfo) => {
-                        if (chrome.runtime.lastError) {
-                          console.log("Tab no longer exists, marking job as failed");
-                          currentJob.status = "fail_tab_lost";
-                          failedJobs.push(currentJob);
-                          setTimeout(processNextJob, JOB_THROTTLE);
-                          return;
-                        }
-                        
-                        // Tab exists, try to reinject content script
-                        console.log("🔧 Reinjecting content script...");
-                        chrome.scripting.executeScript({
-                          target: { tabId: tabId },
-                          files: ['content.js']
-                        }, () => {
-                          if (chrome.runtime.lastError) {
-                            console.error("Failed to reinject content script:", chrome.runtime.lastError.message);
-                            currentJob.status = "fail_reinject";
-                            failedJobs.push(currentJob);
-                            chrome.tabs.remove(tabId, () => tabClosed = true);
-                            setTimeout(processNextJob, JOB_THROTTLE);
-                            return;
-                          }
-                          
-                          // Wait a moment then retry sending the job
-                          setTimeout(() => {
-                            console.log("🔄 Retrying job after content script reinjection...");
-                            chrome.tabs.sendMessage(tabId, { action: "applyJob", job: currentJob }, (retryResponse) => {
-                              if (chrome.runtime.lastError) {
-                                console.error("Retry also failed:", chrome.runtime.lastError.message);
-                                currentJob.status = "fail_retry_failed";
-                                failedJobs.push(currentJob);
-                                chrome.tabs.remove(tabId, () => tabClosed = true);
-                                setTimeout(processNextJob, JOB_THROTTLE);
-                              } else {
-                                console.log("✅ Retry successful, job restarted");
-                                // Job is now running, reset timeout and listeners
-                                timeoutId = setTimeout(() => {
-                                  if (!jobCompleted) {
-                                    jobCompleted = true;
-                                    currentJob.status = "fail_timeout";
-                                    failedJobs.push(currentJob);
-                                    chrome.tabs.remove(tabId, () => tabClosed = true);
-                                    setTimeout(processNextJob, JOB_THROTTLE);
-                                  }
-                                }, JOB_TIMEOUT);
-                                chrome.runtime.onMessage.addListener(jobResultListener);
-                                jobCompleted = false; // Reset completion flag
-                              }
-                            });
-                          }, 2000);
-                        });
-                      });
-                    }
-                  } else {
-                    // Other communication errors
+            // Check if content script is already responsive before injecting
+            console.log("🔧 Testing if content script is already active...");
+            chrome.tabs.sendMessage(tabId, { action: "ping" }, (response) => {
+              if (chrome.runtime.lastError || !response) {
+                console.log("🔧 No response from content script, injecting fresh copy...");
+                
+                // Inject content script since there's no response
+                chrome.scripting.executeScript({
+                  target: { tabId: tabId },
+                  files: ['content.js']
+                }, () => {
+                  if (chrome.runtime.lastError) {
+                    console.error("❌ Failed to inject content script:", chrome.runtime.lastError.message);
                     if (!jobCompleted) {
                       jobCompleted = true;
                       clearTimeout(timeoutId);
-                      currentJob.status = "fail_communication";
-                      failedJobs.push(currentJob);
+                      currentJob.status = "fail_script_inject";
+                      const shouldRetry = addToRetryQueue(currentJob, "fail_script_inject");
                       chrome.runtime.onMessage.removeListener(jobResultListener);
                       chrome.tabs.remove(tabId, () => tabClosed = true);
                       setTimeout(processNextJob, JOB_THROTTLE);
                     }
+                    return;
                   }
-                } else {
-                  console.log("✅ Message sent successfully to content script");
-                }
-              });
-            } catch (error) {
-              console.error("❌ Exception sending message:", error.message);
-              if (!jobCompleted) {
-                jobCompleted = true;
-                clearTimeout(timeoutId);
-                currentJob.status = "fail_exception";
-                failedJobs.push(currentJob);
-                chrome.runtime.onMessage.removeListener(jobResultListener);
-                chrome.tabs.remove(tabId, () => tabClosed = true);
-                setTimeout(processNextJob, JOB_THROTTLE);
+                  
+                  // Wait for fresh content script to initialize, then send job
+                  setTimeout(() => {
+                    sendJobWithRetry();
+                  }, 4000); // Longer wait for fresh injection
+                });
+              } else {
+                console.log("✅ Content script already active, sending job directly...");
+                sendJobWithRetry();
               }
+            });
+            
+            // Send job with retry logic for bfcache recovery
+            function sendJobWithRetry() {
+              let messageAttempts = 0;
+              const maxMessageAttempts = 3;
+              
+              function attemptSendMessage() {
+                messageAttempts++;
+                console.log(`📤 Attempt ${messageAttempts}/${maxMessageAttempts}: Sending job to content script: ${currentJob.jobTitle}`);
+                
+                // First send a cleanup message to prevent duplicate processing
+                chrome.tabs.sendMessage(tabId, { action: "cleanup" }, () => {
+                  // Ignore cleanup response, just proceed with job
+                  setTimeout(() => {
+                    chrome.tabs.sendMessage(tabId, { action: "applyJob", job: currentJob }, (response) => {
+                      if (chrome.runtime.lastError) {
+                        const errorMsg = chrome.runtime.lastError.message;
+                        console.error(`❌ Message attempt ${messageAttempts} failed:`, errorMsg);
+                        
+                        if (errorMsg.includes("back/forward cache") && messageAttempts < maxMessageAttempts) {
+                          console.log("🔄 Bfcache detected, re-injecting content script and retrying...");
+                          
+                          // Re-inject and try again
+                          chrome.scripting.executeScript({
+                            target: { tabId: tabId },
+                            files: ['content.js']
+                          }, () => {
+                            if (chrome.runtime.lastError) {
+                              console.error("❌ Failed to re-inject content script:", chrome.runtime.lastError.message);
+                              if (!jobCompleted) {
+                                jobCompleted = true;
+                                clearTimeout(timeoutId);
+                                currentJob.status = "fail_script_reinject";
+                                const shouldRetry = addToRetryQueue(currentJob, "fail_script_reinject");
+                                chrome.runtime.onMessage.removeListener(jobResultListener);
+                                chrome.tabs.remove(tabId, () => tabClosed = true);
+                                setTimeout(processNextJob, JOB_THROTTLE);
+                              }
+                              return;
+                            }
+                            
+                            // Wait and retry
+                            setTimeout(() => {
+                              attemptSendMessage();
+                            }, 3000);
+                          });
+                        } else {
+                          // Max attempts reached or different error
+                          if (!jobCompleted) {
+                            jobCompleted = true;
+                            clearTimeout(timeoutId);
+                            currentJob.status = "fail_communication_persistent";
+                            const shouldRetry = addToRetryQueue(currentJob, "fail_communication_persistent");
+                            chrome.runtime.onMessage.removeListener(jobResultListener);
+                            chrome.tabs.remove(tabId, () => tabClosed = true);
+                            setTimeout(processNextJob, JOB_THROTTLE);
+                          }
+                        }
+                      } else {
+                        console.log(`✅ Message sent successfully on attempt ${messageAttempts}`);
+                      }
+                    });
+                  }, 500); // Small delay after cleanup
+                });
+              }
+              
+              attemptSendMessage();
             }
           });
         }, 3000); // Wait 3 seconds for Indeed's dynamic content
@@ -691,9 +899,14 @@ function createJobTab() {
         activeJobTabId = null; // Clear active job tab
         clearTimeout(timeoutId);
         
-        const shouldRetry = addToRetryQueue(currentJob, "fail_tab_closed");
-        if (!shouldRetry) {
-          console.log("❌ Job permanently failed due to tab closure:", currentJob.jobTitle);
+        // Only try to retry if we have a valid currentJob
+        if (currentJob) {
+          const shouldRetry = addToRetryQueue(currentJob, "fail_tab_closed");
+          if (!shouldRetry) {
+            console.log("❌ Job permanently failed due to tab closure:", currentJob.jobTitle);
+          }
+        } else {
+          console.log("⚠️ Tab closed but no current job to retry");
         }
         
         chrome.runtime.onMessage.removeListener(jobResultListener);

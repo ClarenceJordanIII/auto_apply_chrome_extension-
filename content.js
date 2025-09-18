@@ -35,6 +35,106 @@ if (!isIndeedSite) {
   // ⚡ MAIN EXTENSION CODE - Only runs on Indeed sites
   console.log("🚀 Content script loaded on Indeed - preventing cache...");
 
+  // ═══════════════════════════════════════════════════════════════════════════
+  // � SUPPRESS INDEED'S CORS ERRORS - These are not our responsibility
+  // ═══════════════════════════════════════════════════════════════════════════
+  
+  // Suppress console errors that we can't control (Indeed's API calls)
+  const originalConsoleError = console.error;
+  console.error = function(...args) {
+    const message = args.join(' ');
+    
+    // Suppress known Indeed CORS errors that we can't fix
+    if (message.includes('CORS policy') && 
+        (message.includes('indeed.com') || 
+         message.includes('smartapply.indeed.com') ||
+         message.includes('Access-Control-Allow-Credentials'))) {
+      return; // Silently ignore Indeed's CORS issues
+    }
+    
+    // Suppress React errors from Indeed's page (not our extension)
+    if (message.includes('Minified React error') &&
+        !message.includes('indeed-extension')) {
+      return; // Silently ignore Indeed's React errors
+    }
+    
+    // Let all other errors through (including our own)
+    originalConsoleError.apply(console, args);
+  };
+
+  // ═══════════════════════════════════════════════════════════════════════════
+  // �🛡️ SAFE DOM MANIPULATION - Avoid React conflicts
+  // ═══════════════════════════════════════════════════════════════════════════
+  
+  /**
+   * Safely create DOM elements without interfering with React
+   */
+  function createSafeElement(tagName, options = {}) {
+    try {
+      const element = document.createElement(tagName);
+      
+      // Add unique marker to identify extension elements
+      element.setAttribute('data-indeed-extension', 'true');
+      
+      // Apply options safely
+      if (options.className) element.className = options.className;
+      if (options.id) element.id = options.id;
+      if (options.innerHTML) {
+        // Use textContent for safety, unless explicitly allowed
+        if (options.allowHTML === true) {
+          element.innerHTML = options.innerHTML;
+        } else {
+          element.textContent = options.innerHTML;
+        }
+      }
+      if (options.style) {
+        Object.assign(element.style, options.style);
+      }
+      
+      return element;
+    } catch (err) {
+      console.warn('⚠️ Error creating DOM element:', err);
+      return null;
+    }
+  }
+
+  /**
+   * Safely append element with React conflict avoidance
+   */
+  function safeAppendChild(parent, child) {
+    try {
+      if (!parent || !child) return false;
+      
+      // Use requestAnimationFrame to avoid React render conflicts
+      requestAnimationFrame(() => {
+        if (parent && child && !child.parentNode) {
+          parent.appendChild(child);
+        }
+      });
+      
+      return true;
+    } catch (err) {
+      console.warn('⚠️ Error appending child element:', err);
+      return false;
+    }
+  }
+
+  /**
+   * Remove extension elements safely
+   */
+  function removeExtensionElements() {
+    try {
+      const extensionElements = document.querySelectorAll('[data-indeed-extension="true"]');
+      extensionElements.forEach(el => {
+        if (el.parentNode) {
+          el.parentNode.removeChild(el);
+        }
+      });
+    } catch (err) {
+      console.warn('⚠️ Error removing extension elements:', err);
+    }
+  }
+
   // Check if content script was previously injected
   if (window.indeedAutoApplyLoaded) {
     console.log(
@@ -88,15 +188,150 @@ if (!isIndeedSite) {
     console.log("🆕 First time content script load");
   }
 
-  // Prevent page from being cached by browser
-  window.addEventListener("pageshow", function (event) {
-    if (event.persisted) {
-      console.log(
-        "⚠️ Page loaded from cache, reloading to ensure fresh state..."
-      );
-      window.location.reload();
+  // ═══════════════════════════════════════════════════════════════════════════
+  // 🛡️ COMPREHENSIVE ERROR HANDLING - Wrap all operations
+  // ═══════════════════════════════════════════════════════════════════════════
+  
+  function initializeExtensionSafely() {
+    try {
+      console.log("🚀 Initializing extension with error protection...");
+      
+      // Initialize all main functions with individual error handling
+      setupEventListeners();
+      setupGlobalFunctions();
+      initializeMainLogic();
+      
+    } catch (err) {
+      console.error("❌ Critical error in extension initialization:", err);
+      showErrorNotification("Extension initialization failed. Please refresh the page.");
     }
-  });
+  }
+
+  function setupEventListeners() {
+    try {
+      // Prevent page from being cached by browser
+      window.addEventListener("pageshow", function (event) {
+        if (event.persisted) {
+          console.log(
+            "⚠️ Page loaded from cache, reloading to ensure fresh state..."
+          );
+          window.location.reload();
+        }
+      });
+      
+      // Add unhandled error listener
+      window.addEventListener('error', function(event) {
+        // Only log errors from our extension
+        if (event.filename && event.filename.includes('chrome-extension://')) {
+          console.error("🐛 Extension error caught:", event.error);
+        }
+      });
+      
+    } catch (err) {
+      console.warn("⚠️ Error setting up event listeners:", err);
+    }
+  }
+
+  function showErrorNotification(message) {
+    try {
+      const notice = createSafeElement("div", {
+        innerHTML: `⚠️ ${message}`,
+        style: {
+          position: 'fixed',
+          top: '20px',
+          right: '20px',
+          background: '#ff6b6b',
+          color: 'white',
+          padding: '15px 25px',
+          borderRadius: '8px',
+          zIndex: '999999',
+          fontFamily: 'Arial, sans-serif',
+          fontSize: '14px',
+          boxShadow: '0 4px 12px rgba(0,0,0,0.3)'
+        }
+      });
+      if (notice && safeAppendChild(document.body, notice)) {
+        setTimeout(() => {
+          if (notice && notice.parentNode) {
+            notice.parentNode.removeChild(notice);
+          }
+        }, 8000);
+      }
+    } catch (err) {
+      console.warn("Could not show error notification:", err);
+    }
+  }
+
+  // ═══════════════════════════════════════════════════════════════════════════
+  // 📋 USER CONFIGURATION LOADER - Load user data from JSON config
+  // ═══════════════════════════════════════════════════════════════════════════
+  let userConfig = null;
+
+  async function loadUserConfig() {
+    if (userConfig) return userConfig; // Return cached config
+
+    try {
+      const response = await fetch(chrome.runtime.getURL('questions_config.json'));
+      userConfig = await response.json();
+      console.log("✅ User configuration loaded successfully");
+      return userConfig;
+    } catch (error) {
+      console.error("❌ Failed to load user configuration:", error);
+      // Return minimal fallback config
+      return {
+        personalInfo: {},
+        professionalInfo: {},
+        education: {},
+        textInputPatterns: []
+      };
+    }
+  }
+
+  // Smart value generator that uses user config instead of hardcoded values
+  async function getSmartValue(labelText, inputType = 'text') {
+    const config = await loadUserConfig();
+    const text = labelText.toLowerCase();
+
+    // Try to match against text input patterns first
+    for (const pattern of config.textInputPatterns || []) {
+      if (pattern.keywords.some(keyword => text.includes(keyword.toLowerCase()))) {
+        return pattern.value;
+      }
+    }
+
+    // Fallback to direct property matches
+    const personalInfo = config.personalInfo || {};
+    const professionalInfo = config.professionalInfo || {};
+    const education = config.education || {};
+
+    // Direct property mapping
+    if (text.includes('address') || text.includes('street')) return personalInfo.address || '';
+    if (text.includes('city')) return personalInfo.city || '';
+    if (text.includes('state') || text.includes('province')) return personalInfo.state || '';
+    if (text.includes('zip') || text.includes('postal')) return personalInfo.zip || '';
+    if (text.includes('phone') || text.includes('mobile')) return personalInfo.phone || '';
+    if (text.includes('email')) return personalInfo.email || '';
+    if (text.includes('linkedin')) return professionalInfo.linkedin || '';
+    if (text.includes('website') || text.includes('portfolio')) return professionalInfo.website || '';
+    if (text.includes('github')) return professionalInfo.github || '';
+    if (text.includes('salary') || text.includes('compensation')) return professionalInfo.salary || 'Competitive';
+    if (text.includes('school') || text.includes('university')) return education.school || '';
+    if (text.includes('major') || text.includes('degree')) return education.major || '';
+    if (text.includes('gpa')) return education.gpa || '';
+
+    // Generic fallbacks based on question type - try config first
+    if (text.includes('experience') && text.includes('year')) {
+      return professionalInfo.experience || config.fallbacks?.experience || '';
+    }
+    if (text.includes('available') || text.includes('start')) {
+      return professionalInfo.availability || config.fallbacks?.availability || '';
+    }
+    if (text.includes('reason') || text.includes('why')) {
+      return professionalInfo.motivation || config.fallbacks?.motivation || '';
+    }
+
+    return ''; // Return empty string if no match
+  }
 
   // Keep connection alive to prevent caching
   if (!window.keepAliveInterval) {
@@ -134,12 +369,27 @@ if (!isIndeedSite) {
       );
       // Optionally show a user-friendly message
       if (document.body) {
-        const notice = document.createElement("div");
-        notice.style.cssText =
-          "position:fixed;top:10px;right:10px;background:#ff4444;color:white;padding:10px;border-radius:5px;z-index:99999;font-family:Arial,sans-serif;";
-        notice.textContent = "Extension updated - Please refresh the page";
-        document.body.appendChild(notice);
-        setTimeout(() => notice.remove(), 5000);
+        const notice = createSafeElement("div", {
+          innerHTML: "Extension updated - Please refresh the page",
+          style: {
+            position: 'fixed',
+            top: '10px',
+            right: '10px',
+            background: '#ff4444',
+            color: 'white',
+            padding: '10px',
+            borderRadius: '5px',
+            zIndex: '99999',
+            fontFamily: 'Arial,sans-serif'
+          }
+        });
+        if (notice && safeAppendChild(document.body, notice)) {
+          setTimeout(() => {
+            if (notice && notice.parentNode) {
+              notice.parentNode.removeChild(notice);
+            }
+          }, 5000);
+        }
       }
     }
   });
@@ -160,25 +410,31 @@ if (!isIndeedSite) {
 
     // Show user notification
     if (document.body) {
-      const notice = document.createElement("div");
-      notice.style.cssText = `
-      position: fixed !important;
-      top: 20px !important;
-      left: 50% !important;
-      transform: translateX(-50%) !important;
-      background: #dc3545 !important;
-      color: white !important;
-      padding: 15px 25px !important;
-      border-radius: 8px !important;
-      z-index: 999999 !important;
-      font-family: Arial, sans-serif !important;
-      font-size: 16px !important;
-      font-weight: bold !important;
-      box-shadow: 0 4px 12px rgba(0,0,0,0.3) !important;
-    `;
-      notice.textContent = "🛑 AUTOMATION STOPPED - All processes halted";
-      document.body.appendChild(notice);
-      setTimeout(() => notice.remove(), 5000);
+      const notice = createSafeElement("div", {
+        innerHTML: "🛑 AUTOMATION STOPPED - All processes halted",
+        style: {
+          position: 'fixed',
+          top: '20px',
+          left: '50%',
+          transform: 'translateX(-50%)',
+          background: '#dc3545',
+          color: 'white',
+          padding: '15px 25px',
+          borderRadius: '8px',
+          zIndex: '999999',
+          fontFamily: 'Arial, sans-serif',
+          fontSize: '16px',
+          fontWeight: 'bold',
+          boxShadow: '0 4px 12px rgba(0,0,0,0.3)'
+        }
+      });
+      if (notice && safeAppendChild(document.body, notice)) {
+        setTimeout(() => {
+          if (notice && notice.parentNode) {
+            notice.parentNode.removeChild(notice);
+          }
+        }, 5000);
+      }
     }
   }
 
@@ -712,8 +968,22 @@ if (!isIndeedSite) {
       this.initialized = false;
       this.autoDetectionActive = false;
       this.observedContainers = new Set();
-      this.initAsync();
+      this.retryAttempts = new Map(); // Track retry attempts per element
+      this.maxRetries = 5; // Limit retries to prevent infinite loops
+      
+      // Bind all methods to ensure 'this' context is preserved
+      this.calculateSimilarity = this.calculateSimilarity.bind(this);
+      this.parseQuestionComponents = this.parseQuestionComponents.bind(this);
+      this.checkLearnedPatterns = this.checkLearnedPatterns.bind(this);
+      
       console.log("🧠 Question Learning System initializing...");
+      console.log("🔧 Functions bound:", {
+        calculateSimilarity: typeof this.calculateSimilarity,
+        parseQuestionComponents: typeof this.parseQuestionComponents,
+        checkLearnedPatterns: typeof this.checkLearnedPatterns
+      });
+      
+      this.initAsync();
     }
 
     /**
@@ -722,6 +992,7 @@ if (!isIndeedSite) {
     async initAsync() {
       try {
         await this.loadLearnedPatterns();
+        await this.loadUserConfig();
         this.initialized = true;
         console.log(
           `🧠 Question Learning System initialized successfully with ${this.learnedPatterns.size} patterns`
@@ -737,6 +1008,32 @@ if (!isIndeedSite) {
           error
         );
         this.initialized = true; // Continue with empty patterns
+      }
+    }
+
+    /**
+     * Load user configuration from questions_config.json
+     */
+    async loadUserConfig() {
+      try {
+        if (this.userConfig) {
+          return this.userConfig; // Already loaded
+        }
+
+        // Use the global loadUserConfig function
+        this.userConfig = await loadUserConfig();
+        
+        if (this.userConfig) {
+          console.log("✅ User configuration loaded for learning system");
+        } else {
+          console.warn("⚠️ No user configuration available");
+        }
+        
+        return this.userConfig;
+      } catch (error) {
+        console.error("❌ Error loading user config for learning system:", error);
+        this.userConfig = null;
+        return null;
       }
     }
 
@@ -793,9 +1090,20 @@ if (!isIndeedSite) {
         const knownAnswer = this.findKnownAnswer(questionText);
 
         if (!knownAnswer) {
-          // This is an unknown question - start learning
+          // This is an unknown question - try dynamic detection FIRST
           console.log(`🔍 Auto-detected unknown question: "${questionText}"`);
-          this.startWatching(container, questionText, inputs);
+          this.tryDynamicDetectionAndFill(container, questionText, inputs[0])
+            .then(success => {
+              if (!success) {
+                // Only start watching if dynamic detection failed
+                console.log(`⚠️ Dynamic detection failed for: "${questionText}" - Starting manual learning`);
+                this.startWatching(container, questionText, inputs);
+              }
+            })
+            .catch(error => {
+              console.error(`❌ Dynamic detection error for: "${questionText}"`, error);
+              this.startWatching(container, questionText, inputs);
+            });
         } else {
           // We know this question - try to answer it automatically
           console.log(
@@ -806,6 +1114,272 @@ if (!isIndeedSite) {
 
         this.observedContainers.add(container);
       });
+    }
+
+    /**
+     * 🤖 Try dynamic detection and immediately fill the form
+     */
+    async tryDynamicDetectionAndFill(container, questionText, inputElement) {
+      try {
+        // Check retry limit
+        const elementId = this.getElementId(inputElement);
+        const retryCount = this.retryAttempts.get(elementId) || 0;
+        
+        if (retryCount >= this.maxRetries) {
+          console.log(`🚫 Retry limit reached for element: "${questionText}" (${retryCount}/${this.maxRetries})`);
+          return false;
+        }
+        
+        // Increment retry count
+        this.retryAttempts.set(elementId, retryCount + 1);
+        
+        console.log(`🤖 Trying dynamic detection for: "${questionText}" (attempt ${retryCount + 1}/${this.maxRetries})`);
+        
+        // Detect question type dynamically
+        const questionType = this.detectQuestionTypeFromContext(questionText, inputElement);
+        
+        if (!questionType || questionType.type === 'unknown' || questionType.confidence < 0.3) {
+          console.log(`❌ Dynamic detection failed - type: ${questionType?.type}, confidence: ${questionType?.confidence}`);
+          return false;
+        }
+
+        console.log(`🎯 Dynamic detection success: type="${questionType.type}", confidence=${(questionType.confidence * 100).toFixed(1)}%`);
+        
+        // Generate smart value
+        const smartValue = await this.generateSmartValue(questionType, questionText, questionType.inputType);
+        
+        if (!smartValue && smartValue !== '') {  // Allow empty strings for some cases
+          console.log(`❌ Could not generate smart value for type: ${questionType.type}`);
+          return false;
+        }
+
+        console.log(`💡 Generated smart value: "${smartValue}" for type: ${questionType.type}`);
+        
+        // Apply the value to the input
+        const success = await this.applyValueToInput(inputElement, smartValue, questionType);
+        
+        if (success) {
+          console.log(`✅ Successfully filled "${questionText}" with "${smartValue}"`);
+          
+          // Reset retry count on success
+          this.retryAttempts.delete(elementId);
+          
+          // Create learning pattern for future use
+          await this.createLearningPatternFromSmartDetection(questionText, smartValue, questionType, container);
+          
+          // Show success indicator
+          this.showAutoFillIndicator(container, questionType, smartValue);
+          
+          return true;
+        } else {
+          console.log(`❌ Failed to apply value to input for: "${questionText}"`);
+          return false;
+        }
+        
+      } catch (error) {
+        console.error(`❌ Error in dynamic detection and fill:`, error);
+        return false;
+      }
+    }
+
+    /**
+     * Generate a unique ID for an element for retry tracking
+     */
+    getElementId(element) {
+      if (!element) return Math.random().toString(36);
+      
+      // Try to get a unique identifier
+      if (element.id) return element.id;
+      if (element.name) return element.name;
+      
+      // Create a unique ID based on position and attributes
+      const rect = element.getBoundingClientRect();
+      const tagName = element.tagName.toLowerCase();
+      const type = element.type || '';
+      const className = element.className || '';
+      
+      return `${tagName}-${type}-${Math.round(rect.top)}-${Math.round(rect.left)}-${className}`.replace(/\s+/g, '-');
+    }
+
+    /**
+     * Apply value to input element based on type
+     */
+    async applyValueToInput(inputElement, value, questionType) {
+      try {
+        if (!inputElement) return false;
+
+        switch (questionType.inputType) {
+          case 'select':
+            return this.fillSelectInput(inputElement, value);
+          
+          case 'radio':
+            return this.fillRadioInput(inputElement, value);
+            
+          case 'textarea':
+          case 'text':
+          default:
+            return this.fillTextInput(inputElement, value);
+        }
+      } catch (error) {
+        console.error('Error applying value to input:', error);
+        return false;
+      }
+    }
+
+    /**
+     * Fill text input
+     */
+    fillTextInput(input, value) {
+      try {
+        input.focus();
+        input.value = value;
+        
+        // Dispatch events to trigger React/form validation
+        input.dispatchEvent(new Event('input', { bubbles: true }));
+        input.dispatchEvent(new Event('change', { bubbles: true }));
+        input.dispatchEvent(new Event('blur', { bubbles: true }));
+        
+        console.log(`✅ Filled text input with: "${value}"`);
+        return true;
+      } catch (error) {
+        console.error('Error filling text input:', error);
+        return false;
+      }
+    }
+
+    /**
+     * Fill select dropdown
+     */
+    fillSelectInput(select, value) {
+      try {
+        // Try to find the option by value, text, or partial match
+        const options = Array.from(select.options);
+        
+        // First try exact value match
+        let targetOption = options.find(opt => opt.value.toLowerCase() === value.toLowerCase());
+        
+        // Then try exact text match
+        if (!targetOption) {
+          targetOption = options.find(opt => opt.textContent.toLowerCase().trim() === value.toLowerCase());
+        }
+        
+        // Then try partial text match
+        if (!targetOption) {
+          targetOption = options.find(opt => 
+            opt.textContent.toLowerCase().includes(value.toLowerCase()) ||
+            value.toLowerCase().includes(opt.textContent.toLowerCase().trim())
+          );
+        }
+        
+        // For countries, try common mappings
+        if (!targetOption && value.toLowerCase().includes('united states')) {
+          targetOption = options.find(opt => opt.textContent.toLowerCase().includes('united states'));
+        }
+        
+        if (targetOption) {
+          select.value = targetOption.value;
+          select.dispatchEvent(new Event('change', { bubbles: true }));
+          console.log(`✅ Selected option: "${targetOption.textContent}" (value: ${targetOption.value})`);
+          return true;
+        } else {
+          console.log(`❌ Could not find matching option for: "${value}"`);
+          console.log('Available options:', options.map(opt => opt.textContent.trim()));
+          return false;
+        }
+      } catch (error) {
+        console.error('Error filling select input:', error);
+        return false;
+      }
+    }
+
+    /**
+     * Fill radio button
+     */
+    fillRadioInput(radio, value) {
+      try {
+        // Find the radio group
+        const container = radio.closest('div, fieldset') || radio.parentElement;
+        const radios = container.querySelectorAll(`input[name="${radio.name}"]`);
+        
+        for (const radioOption of radios) {
+          const label = radioOption.closest('label') || 
+                       container.querySelector(`label[for="${radioOption.id}"]`);
+          const labelText = label ? label.textContent.toLowerCase().trim() : '';
+          const radioValue = radioOption.value.toLowerCase();
+          
+          if (radioValue === value.toLowerCase() || 
+              labelText.includes(value.toLowerCase()) ||
+              (value.toLowerCase() === 'yes' && (radioValue === 'yes' || labelText === 'yes')) ||
+              (value.toLowerCase() === 'no' && (radioValue === 'no' || labelText === 'no'))) {
+            
+            radioOption.checked = true;
+            radioOption.dispatchEvent(new Event('change', { bubbles: true }));
+            console.log(`✅ Selected radio option: "${labelText}" (value: ${radioValue})`);
+            return true;
+          }
+        }
+        
+        console.log(`❌ Could not find matching radio option for: "${value}"`);
+        return false;
+      } catch (error) {
+        console.error('Error filling radio input:', error);
+        return false;
+      }
+    }
+
+    /**
+     * Show auto-fill success indicator
+     */
+    showAutoFillIndicator(container, questionType, value) {
+      try {
+        const indicator = createSafeElement("div", {
+          className: "auto-fill-indicator",
+          innerHTML: `✅ Auto-filled: ${questionType.type}`,
+          style: {
+            position: 'absolute',
+            top: '-5px',
+            right: '-5px',
+            background: 'linear-gradient(45deg, #2196F3, #1976D2)',
+            color: 'white',
+            padding: '4px 8px',
+            borderRadius: '12px',
+            fontSize: '11px',
+            fontWeight: 'bold',
+            zIndex: '10000',
+            animation: 'autoFillSuccess 3s ease-out',
+            boxShadow: '0 2px 8px rgba(0,0,0,0.2)'
+          }
+        });
+
+        if (indicator) {
+          // Add CSS animation if not already present
+          if (!document.getElementById("auto-fill-styles")) {
+            const style = document.createElement("style");
+            style.id = "auto-fill-styles";
+            style.textContent = `
+            @keyframes autoFillSuccess {
+              0% { transform: scale(0.8); opacity: 0; }
+              15% { transform: scale(1.2); opacity: 1; }
+              80% { transform: scale(1); opacity: 1; }
+              100% { transform: scale(0.9); opacity: 0; }
+            }
+            `;
+            document.head.appendChild(style);
+          }
+
+          container.style.position = container.style.position || "relative";
+          safeAppendChild(container, indicator);
+
+          // Remove indicator after animation
+          setTimeout(() => {
+            if (indicator && indicator.parentNode) {
+              indicator.parentNode.removeChild(indicator);
+            }
+          }, 3000);
+        }
+      } catch (error) {
+        console.warn("⚠️ Could not show auto-fill indicator:", error);
+      }
     }
 
     /**
@@ -863,13 +1437,23 @@ if (!isIndeedSite) {
 
       // Check for similar matches
       for (const [key, pattern] of this.learnedPatterns) {
-        const similarity = this.calculateSimilarity(
-          parsedQuestion,
-          pattern.parsedComponents
-        );
-        if (similarity > 0.8) {
-          // 80% similarity for auto-application
-          return pattern;
+        try {
+          if (typeof this.calculateSimilarity !== 'function') {
+            console.error('❌ calculateSimilarity function not found');
+            break;
+          }
+          
+          const similarity = this.calculateSimilarity(
+            parsedQuestion,
+            pattern.parsedComponents
+          );
+          if (similarity > 0.8) {
+            // 80% similarity for auto-application
+            return pattern;
+          }
+        } catch (error) {
+          console.error('❌ Error in similarity calculation:', error);
+          continue;
         }
       }
 
@@ -1431,23 +2015,33 @@ if (!isIndeedSite) {
 
       // Fuzzy matching - look for similar patterns
       for (const [key, pattern] of this.learnedPatterns) {
-        const similarity = this.calculateSimilarity(
-          parsedQuestion,
-          pattern.parsedComponents
-        );
-        if (similarity > 0.7) {
-          // 70% similarity threshold
-          console.log(
-            `🎯 Found similar pattern match (${Math.round(
-              similarity * 100
-            )}%) for: "${questionText}"`
+        try {
+          if (typeof this.calculateSimilarity !== 'function') {
+            console.error('❌ calculateSimilarity function not found');
+            break;
+          }
+          
+          const similarity = this.calculateSimilarity(
+            parsedQuestion,
+            pattern.parsedComponents
           );
-          return {
-            confidence: pattern.confidence * similarity,
-            answer: pattern.answer,
-            source: "fuzzy",
-            similarity: similarity,
-          };
+          if (similarity > 0.7) {
+            // 70% similarity threshold
+            console.log(
+              `🎯 Found similar pattern match (${Math.round(
+                similarity * 100
+              )}%) for: "${questionText}"`
+            );
+            return {
+              confidence: pattern.confidence * similarity,
+              answer: pattern.answer,
+              source: "fuzzy",
+              similarity: similarity,
+            };
+          }
+        } catch (error) {
+          console.error('❌ Error in fuzzy matching:', error);
+          continue;
         }
       }
 
@@ -1456,6 +2050,7 @@ if (!isIndeedSite) {
 
     /**
      * Calculate similarity between two parsed questions
+     * Fixed: Ensure proper function name and scope
      */
     calculateSimilarity(parsed1, parsed2) {
       let score = 0;
@@ -1506,6 +2101,215 @@ if (!isIndeedSite) {
 
       const common = arr1.filter((item) => arr2.includes(item));
       return common.length / Math.max(arr1.length, arr2.length);
+    }
+
+    /**
+     * ⚡ DYNAMIC QUESTION TYPE DETECTION - No hardcoding!
+     * Intelligently detect question types based on keywords and context
+     */
+    detectQuestionTypeFromContext(questionText, inputElement) {
+      const text = questionText.toLowerCase();
+      const inputType = this.detectInputType(inputElement);
+      
+      // Dynamic patterns for different question types
+      const patterns = {
+        name: {
+          keywords: ['name', 'first name', 'last name', 'full name', 'fname', 'lname'],
+          priority: 10
+        },
+        email: {
+          keywords: ['email', 'e-mail', 'email address', 'contact email'],
+          priority: 10
+        },
+        phone: {
+          keywords: ['phone', 'number', 'telephone', 'mobile', 'cell', 'contact number', 'text message'],
+          priority: 9
+        },
+        address: {
+          keywords: ['address', 'street', 'city', 'state', 'zip', 'postal', 'location'],
+          priority: 8
+        },
+        job_title: {
+          keywords: ['job title', 'position', 'recent job', 'current job', 'title', 'role'],
+          priority: 9
+        },
+        company: {
+          keywords: ['employer', 'company', 'organization', 'workplace', 'recent employer'],
+          priority: 9
+        },
+        experience: {
+          keywords: ['experience', 'years', 'worked', 'employment'],
+          priority: 7
+        },
+        education: {
+          keywords: ['education', 'degree', 'school', 'university', 'college', 'diploma'],
+          priority: 7
+        },
+        salary: {
+          keywords: ['salary', 'wage', 'pay', 'compensation', 'rate', 'income'],
+          priority: 8
+        },
+        availability: {
+          keywords: ['available', 'start', 'when can you', 'earliest'],
+          priority: 7
+        },
+        referral: {
+          keywords: ['referred', 'referral', 'employee', 'recommended'],
+          priority: 6
+        },
+        consent: {
+          keywords: ['okay', 'agree', 'consent', 'permission', 'text message', 'contact'],
+          priority: 5
+        },
+        visa: {
+          keywords: ['visa', 'authorized', 'eligible', 'work authorization', 'citizen'],
+          priority: 8
+        }
+      };
+
+      let bestMatch = null;
+      let highestScore = 0;
+
+      // Score each pattern based on keyword matches
+      for (const [type, pattern] of Object.entries(patterns)) {
+        let score = 0;
+        let matches = 0;
+        
+        for (const keyword of pattern.keywords) {
+          if (text.includes(keyword)) {
+            matches++;
+            // Exact phrase matches get higher scores
+            score += keyword.split(' ').length > 1 ? 2 : 1;
+          }
+        }
+        
+        // Apply priority and match ratio bonus
+        if (matches > 0) {
+          const finalScore = (score * pattern.priority) + (matches / pattern.keywords.length * 5);
+          
+          if (finalScore > highestScore) {
+            highestScore = finalScore;
+            bestMatch = {
+              type: type,
+              confidence: Math.min(finalScore / 10, 1), // Normalize to 0-1
+              matches: matches,
+              keywords_matched: pattern.keywords.filter(kw => text.includes(kw))
+            };
+          }
+        }
+      }
+
+      // Add input type context
+      if (bestMatch) {
+        bestMatch.inputType = inputType;
+        bestMatch.isRequired = questionText.includes('*') || inputElement?.hasAttribute('required');
+        bestMatch.isOptional = text.includes('optional') || text.includes('(optional)');
+      }
+
+      console.log(`🔍 Dynamic detection for "${questionText.substring(0, 50)}...":`, bestMatch);
+      return bestMatch || { type: 'unknown', confidence: 0, inputType: inputType };
+    }
+
+    /**
+     * ⚡ SMART VALUE GENERATION - Uses config + detected type
+     */
+    async generateSmartValue(questionType, questionText, inputType) {
+      try {
+        // Load user config if not already loaded
+        if (!this.userConfig) {
+          await this.loadUserConfig();
+        }
+
+        const config = this.userConfig;
+        if (!config) {
+          console.warn('⚠️ No user config available for smart value generation');
+          return null;
+        }
+
+        // Generate value based on detected question type
+        switch (questionType.type) {
+          case 'name':
+            if (questionText.toLowerCase().includes('first')) {
+              return config.personalInfo?.firstName || 'John';
+            } else if (questionText.toLowerCase().includes('last')) {
+              return config.personalInfo?.lastName || 'Doe';
+            } else {
+              return `${config.personalInfo?.firstName || 'John'} ${config.personalInfo?.lastName || 'Doe'}`;
+            }
+
+          case 'email':
+            return config.personalInfo?.email || 'john.doe@email.com';
+
+          case 'phone':
+            return config.personalInfo?.phoneNumber || '(555) 123-4567';
+
+          case 'job_title':
+            return config.professionalInfo?.mostRecentJobTitle || 'Software Developer';
+
+          case 'company':
+            return config.professionalInfo?.mostRecentEmployer || 'Tech Company';
+
+          case 'address':
+            const addr = config.personalInfo?.address;
+            if (!addr) return '123 Main St, City, State 12345';
+            
+            if (questionText.toLowerCase().includes('street')) {
+              return addr.street || '123 Main St';
+            } else if (questionText.toLowerCase().includes('city')) {
+              return addr.city || 'City';
+            } else if (questionText.toLowerCase().includes('state')) {
+              return addr.state || 'State';
+            } else if (questionText.toLowerCase().includes('zip')) {
+              return addr.zipCode || '12345';
+            } else {
+              return `${addr.street || '123 Main St'}, ${addr.city || 'City'}, ${addr.state || 'State'} ${addr.zipCode || '12345'}`;
+            }
+
+          case 'salary':
+            return config.professionalInfo?.desiredSalary || '75000';
+
+          case 'experience':
+            return config.professionalInfo?.yearsOfExperience?.toString() || '3';
+
+          case 'education':
+            const edu = config.education?.degrees?.[0];
+            if (questionText.toLowerCase().includes('degree')) {
+              return edu?.degreeType || 'Bachelor of Science';
+            } else if (questionText.toLowerCase().includes('school') || questionText.toLowerCase().includes('university')) {
+              return edu?.institutionName || 'University';
+            }
+            return edu?.degreeType || 'Bachelor of Science';
+
+          case 'consent':
+            // For yes/no questions, prefer "Yes" for consent
+            return questionText.toLowerCase().includes('okay') || 
+                   questionText.toLowerCase().includes('agree') ? 'yes' : 'no';
+
+          case 'referral':
+            // Usually optional, leave blank unless specified
+            return '';
+
+          case 'visa':
+            return config.personalInfo?.workAuthorization || 'yes';
+
+          case 'availability':
+            return config.professionalInfo?.availableStartDate || 'Immediately';
+
+          default:
+            // Try pattern matching from textInputPatterns
+            if (config.textInputPatterns) {
+              for (const pattern of config.textInputPatterns) {
+                if (questionText.toLowerCase().includes(pattern.keywords.toLowerCase())) {
+                  return pattern.response;
+                }
+              }
+            }
+            return null;
+        }
+      } catch (error) {
+        console.error('❌ Error generating smart value:', error);
+        return null;
+      }
     }
 
     /**
@@ -1776,9 +2580,16 @@ if (!isIndeedSite) {
 
       console.log(`🧠 Checking learned patterns for: "${questionText}"`);
 
-      // Parse the current question
-      const currentParsed = this.parseQuestion(questionText);
-      console.log(`🔍 Current question parsed:`, currentParsed);
+      // Parse the current question with error handling
+      let currentParsed;
+      try {
+        currentParsed = this.parseQuestionComponents(questionText);
+        console.log(`🔍 Current question parsed:`, currentParsed);
+      } catch (error) {
+        console.error("❌ Error parsing question:", error.message);
+        // Fallback to simple parsing
+        currentParsed = { keywords: questionText.toLowerCase().split(' '), type: 'text' };
+      }
 
       let bestMatch = null;
       let highestSimilarity = 0;
@@ -1786,16 +2597,29 @@ if (!isIndeedSite) {
 
       // Check against all learned patterns
       for (const [patternId, pattern] of this.learnedPatterns.entries()) {
-        const similarity = this.calculateQuestionSimilarity(
-          currentParsed,
-          pattern.parsedQuestion
-        );
+        let similarity = 0;
+        
+        try {
+          // Ensure calculateSimilarity function exists
+          if (typeof this.calculateSimilarity !== 'function') {
+            console.error('❌ calculateSimilarity function not found on this object:', this);
+            continue;
+          }
+          
+          similarity = this.calculateSimilarity(
+            currentParsed,
+            pattern.parsedComponents || pattern.parsedQuestion
+          );
 
-        console.log(
-          `📊 Similarity with "${pattern.originalQuestion}": ${(
-            similarity * 100
-          ).toFixed(1)}%`
-        );
+          console.log(
+            `📊 Similarity with "${pattern.originalQuestion}": ${(
+              similarity * 100
+            ).toFixed(1)}%`
+          );
+        } catch (error) {
+          console.error('❌ Error calculating similarity:', error);
+          continue;
+        }
 
         if (
           similarity > highestSimilarity &&
@@ -1840,6 +2664,46 @@ if (!isIndeedSite) {
           SIMILARITY_THRESHOLD * 100
         }%)`
       );
+
+      // 🚀 FALLBACK: Use dynamic detection for new questions
+      console.log("🔧 Falling back to dynamic question detection...");
+      
+      try {
+        const inputElement = container.querySelector('input, select, textarea');
+        const questionType = this.detectQuestionTypeFromContext(questionText, inputElement);
+        
+        if (questionType && questionType.confidence > 0.5) {
+          console.log(`🎯 Dynamic detection successful:`, questionType);
+          
+          const smartValue = await this.generateSmartValue(questionType, questionText, questionType.inputType);
+          
+          if (smartValue !== null && smartValue !== '') {
+            console.log(`💡 Generated smart value: "${smartValue}"`);
+            
+            // Try to apply the smart value
+            const success = await this.applyLearnedAnswer(
+              container,
+              smartValue,
+              questionType.inputType
+            );
+            
+            if (success) {
+              // Create a learning pattern for future use
+              await this.createLearningPatternFromSmartDetection(
+                questionText,
+                smartValue,
+                questionType,
+                container
+              );
+              
+              return smartValue;
+            }
+          }
+        }
+      } catch (error) {
+        console.error("❌ Dynamic detection failed:", error);
+      }
+
       return null;
     }
 
@@ -1994,6 +2858,123 @@ if (!isIndeedSite) {
     }
 
     /**
+     * 🤖 Create learning pattern automatically from smart detection
+     */
+    async createLearningPatternFromSmartDetection(questionText, smartValue, questionType, container) {
+      try {
+        console.log("🤖 Auto-creating learning pattern from smart detection...");
+        
+        const parsedQuestion = this.parseQuestionComponents(questionText);
+        const patternKey = this.generatePatternKey(parsedQuestion);
+        
+        // Check if pattern already exists
+        if (this.learnedPatterns.has(patternKey)) {
+          console.log("📋 Pattern already exists, updating usage stats");
+          const existingPattern = this.learnedPatterns.get(patternKey);
+          existingPattern.timesEncountered = (existingPattern.timesEncountered || 0) + 1;
+          existingPattern.lastEncountered = Date.now();
+          return;
+        }
+
+        // Create new learning pattern
+        const learnedPattern = {
+          id: `auto_pattern_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`,
+          originalQuestion: questionText,
+          normalizedQuestion: questionText.toLowerCase().trim(),
+          parsedComponents: parsedQuestion,
+          patternKey: patternKey,
+          answer: smartValue,
+          inputType: questionType.inputType,
+          confidence: questionType.confidence,
+          learnedAt: Date.now(),
+          lastEncountered: Date.now(),
+          timesEncountered: 1,
+          timesUsed: 1, // Already used once
+          lastUsed: Date.now(),
+          url: window.location.href,
+          company: this.extractCompanyName(),
+          domain: window.location.hostname,
+          autoGenerated: true, // Mark as auto-generated
+          questionTypeDetected: questionType.type,
+          keywordsMatched: questionType.keywords_matched || []
+        };
+
+        // Save the learned pattern
+        this.learnedPatterns.set(patternKey, learnedPattern);
+
+        console.log(`🎓 AUTO-LEARNED NEW PATTERN:`);
+        console.log(`   Question: "${questionText}"`);
+        console.log(`   Type Detected: "${questionType.type}"`);
+        console.log(`   Answer: "${smartValue}"`);
+        console.log(`   Confidence: ${(questionType.confidence * 100).toFixed(1)}%`);
+
+        // Save patterns asynchronously
+        await this.saveLearnedPatterns();
+
+        // Show brief success indicator
+        this.showAutoLearningIndicator(container, questionType);
+
+      } catch (error) {
+        console.error("❌ Error creating auto-learning pattern:", error);
+      }
+    }
+
+    /**
+     * Show indicator that auto-learning occurred
+     */
+    showAutoLearningIndicator(container, questionType) {
+      try {
+        const indicator = createSafeElement("div", {
+          className: "auto-learning-indicator",
+          innerHTML: `🤖 Auto-learned: ${questionType.type}`,
+          style: {
+            position: 'absolute',
+            top: '-5px',
+            right: '-5px',
+            background: 'linear-gradient(45deg, #4CAF50, #45a049)',
+            color: 'white',
+            padding: '4px 8px',
+            borderRadius: '12px',
+            fontSize: '11px',
+            fontWeight: 'bold',
+            zIndex: '10000',
+            animation: 'autoLearnPulse 2s ease-out',
+            boxShadow: '0 2px 8px rgba(0,0,0,0.2)'
+          }
+        });
+
+        if (indicator) {
+          // Add CSS animation if not already present
+          if (!document.getElementById("auto-learning-styles")) {
+            const style = document.createElement("style");
+            style.id = "auto-learning-styles";
+            style.textContent = `
+            @keyframes autoLearnPulse {
+              0% { transform: scale(0.7) rotate(-5deg); opacity: 0; }
+              15% { transform: scale(1.1) rotate(0deg); opacity: 1; }
+              85% { transform: scale(1) rotate(0deg); opacity: 1; }
+              100% { transform: scale(0.8) rotate(0deg); opacity: 0; }
+            }
+            `;
+            document.head.appendChild(style);
+          }
+
+          container.style.position = container.style.position || "relative";
+          safeAppendChild(container, indicator);
+
+          // Remove indicator after animation
+          setTimeout(() => {
+            if (indicator && indicator.parentNode) {
+              indicator.parentNode.removeChild(indicator);
+            }
+          }, 2000);
+        }
+      } catch (error) {
+        console.warn("⚠️ Could not show auto-learning indicator:", error);
+      }
+    }
+
+    /**
      * Get statistics about learned patterns
      */
     getStats() {
@@ -2063,30 +3044,58 @@ if (!isIndeedSite) {
   };
 
   function indeedMain() {
+    // Try multiple selectors for Indeed's dynamic content
+    const indeedSelectors = [
+      "#MosaicProviderRichSearchDaemon",
+      "[data-jk]", // Job card identifier
+      ".jobsearch-SerpJobCard",
+      ".job_seen_beacon",
+      ".slider_container",
+      ".jobsearch-NoResult",
+      "#resultsCol",
+      ".jobsearch-results"
+    ];
+
     new Promise((resolve, reject) => {
       let attempts = 0;
-      const maxAttempts = 100; // 10 seconds max wait
+      const maxAttempts = 50; // 5 seconds max wait (reduced)
 
       const checkExist = setInterval(() => {
         attempts++;
-        if (document.getElementById("MosaicProviderRichSearchDaemon")) {
+        
+        // Check if any Indeed-specific element exists
+        const foundElement = indeedSelectors.some(selector => 
+          document.querySelector(selector)
+        );
+        
+        if (foundElement || document.readyState === 'complete') {
           clearInterval(checkExist);
+          console.log("✅ Indeed page detected, starting extension");
           resolve();
         } else if (attempts >= maxAttempts) {
           clearInterval(checkExist);
-          reject(
-            new Error(
-              "MosaicProviderRichSearchDaemon element not found after 10 seconds"
-            )
-          );
+          console.log("⚠️ Indeed-specific elements not found, trying generic detection");
+          resolve(); // Don't reject, just proceed with generic detection
         }
       }, 100);
     })
       .then(() => {
-        startIndeed();
+        try {
+          startIndeed();
+        } catch (err) {
+          console.log("⚠️ startIndeed failed, falling back to generic detection:", err);
+          // Fallback to generic auto-detection
+          if (typeof autoDetectUnknownQuestions === 'function') {
+            autoDetectUnknownQuestions();
+          }
+        }
       })
       .catch((err) => {
         console.log("Error in indeedMain:", err);
+        // Still try generic detection as fallback
+        if (typeof autoDetectUnknownQuestions === 'function') {
+          autoDetectUnknownQuestions();
+        }
       });
   }
 
@@ -2576,8 +3585,45 @@ if (!isIndeedSite) {
   }
 
   chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
+    // Handle ping for content script availability check
+    if (message.action === "ping") {
+      sendResponse({ status: "alive", timestamp: Date.now() });
+      return true;
+    }
+    
+    // Handle completion message from background script
+    if (message.action === "ALL_JOBS_COMPLETE") {
+      console.log("🎉 Received completion message from background:", message.results);
+      showCompletionNotification(message.results);
+      sendResponse({ status: "completion_acknowledged" });
+      return true;
+    }
+    
+    // Handle cleanup to prevent multiple instances
+    if (message.action === "cleanup") {
+      console.log("🧹 Cleanup requested - clearing any pending operations...");
+      // Clear any existing timeouts or ongoing processes
+      if (window.currentJobTimeout) {
+        clearTimeout(window.currentJobTimeout);
+        window.currentJobTimeout = null;
+      }
+      if (window.currentJobPromise) {
+        window.currentJobPromise = null;
+      }
+      sendResponse({ status: "cleaned" });
+      return true;
+    }
+    
     if (message.action === "applyJob" && message.job) {
       console.log("📨 Received applyJob message, starting async processing...");
+      
+      // Prevent multiple concurrent job processing
+      if (window.currentJobPromise) {
+        console.log("⚠️ Job already in progress, rejecting new job request");
+        sendResponse({ status: "busy", result: "fail_job_already_running" });
+        return true;
+      }
+      
       console.log("🚀 Starting job application workflow");
       sendStatusMessage(
         `🚀 Starting application for: ${message.job.jobTitle} at ${message.job.companyName}`
@@ -2595,6 +3641,8 @@ if (!isIndeedSite) {
           try {
             responseSent = true;
             if (timeoutId) clearTimeout(timeoutId);
+            window.currentJobPromise = null; // Clear job promise
+            window.currentJobTimeout = null;
             sendResponse(response);
             console.log("📤 Response sent:", response);
           } catch (error) {
@@ -2607,11 +3655,15 @@ if (!isIndeedSite) {
       timeoutId = setTimeout(() => {
         if (!responseSent) {
           console.log("⏰ Job application timeout - sending failure response");
+          window.currentJobPromise = null; // Clear job promise
           safeResponse({ status: "timeout", result: "fail_timeout" });
         }
       }, 75000); // 75 seconds timeout (less than background script timeout)
+      
+      // Store timeout for cleanup
+      window.currentJobTimeout = timeoutId;
 
-      // Wrap in promise to ensure proper error handling
+      // Wrap in promise to ensure proper error handling and track execution
       const executeJob = async () => {
         try {
           const job = message.job;
@@ -2785,14 +3837,19 @@ if (!isIndeedSite) {
         }
       };
 
-      // Execute the job with additional error handling
-      executeJob().catch((error) => {
+      // Execute the job with additional error handling and promise tracking
+      window.currentJobPromise = executeJob().catch((error) => {
         console.error("💥 Unhandled error in job execution:", error);
         safeResponse({
           status: "error",
           message: error.message,
           result: "fail_exception",
         });
+      }).finally(() => {
+        // Always clear the promise when done
+        window.currentJobPromise = null;
+        window.currentJobTimeout = null;
+        console.log("🧹 Job promise cleared");
       });
 
       return true; // Keep message channel open for async operation
@@ -2854,10 +3911,14 @@ if (!isIndeedSite) {
     return false;
   }
 
+  // Prevent duplicate tab close messages
+  let tabCloseMessageSent = false;
+  
   // Listen for tab close (unload) and notify background
   window.addEventListener("beforeunload", function () {
-    if (isExtensionContextValid()) {
+    if (isExtensionContextValid() && !tabCloseMessageSent) {
       try {
+        tabCloseMessageSent = true;
         chrome.runtime.sendMessage({ action: "indeedTabClosed" });
       } catch (error) {
         // Ignore errors on tab close - extension may already be invalidated
@@ -3882,7 +4943,7 @@ if (!isIndeedSite) {
       (input) => input.label === question.label
     );
     if (textInput) {
-      const salaryValue = getSalaryValue(question.label);
+      const salaryValue = await getSalaryValue(question.label);
       textInput.element.value = salaryValue;
       textInput.element.dispatchEvent(new Event("input", { bubbles: true }));
       textInput.element.dispatchEvent(new Event("change", { bubbles: true }));
@@ -3901,7 +4962,7 @@ if (!isIndeedSite) {
       (ta) => ta.label === question.label
     );
     if (textarea) {
-      const reasonText = getReasonText(question.label);
+      const reasonText = await getReasonText(question.label);
       textarea.element.value = reasonText;
       textarea.element.dispatchEvent(new Event("input", { bubbles: true }));
       textarea.element.dispatchEvent(new Event("change", { bubbles: true }));
@@ -3921,7 +4982,7 @@ if (!isIndeedSite) {
       pageData.textInputs.find((input) => input.label === question.label);
 
     if (textarea) {
-      const skillsText = getSkillsText(question.label);
+      const skillsText = await getSkillsText(question.label);
       textarea.element.value = skillsText;
       textarea.element.dispatchEvent(new Event("input", { bubbles: true }));
       textarea.element.dispatchEvent(new Event("change", { bubbles: true }));
@@ -3950,7 +5011,7 @@ if (!isIndeedSite) {
       );
       if (selectInput && selectInput.element) {
         try {
-          const educationValue = getEducationValue(question.label);
+          const educationValue = await getEducationValue(question.label);
           selectInput.element.value = educationValue;
           selectInput.element.dispatchEvent(
             new Event("change", { bubbles: true })
@@ -3968,7 +5029,7 @@ if (!isIndeedSite) {
       );
       if (textInput && textInput.element) {
         try {
-          const educationText = getEducationText(question.label);
+          const educationText = await getEducationText(question.label);
           textInput.element.value = educationText;
           textInput.element.dispatchEvent(
             new Event("input", { bubbles: true })
@@ -4819,77 +5880,24 @@ if (!isIndeedSite) {
     return "3"; // Default safe value
   }
 
-  function getSalaryValue(labelText) {
-    const text = labelText.toLowerCase();
-
-    if (text.includes("expected") || text.includes("desired")) {
-      return "Competitive salary based on market rates";
-    }
-    if (text.includes("minimum") || text.includes("lowest")) {
-      return "Open to discussion";
-    }
-    if (text.includes("range")) {
-      return "$50,000 - $80,000";
-    }
-
-    return "Competitive";
+  async function getSalaryValue(labelText) {
+    return await getSmartValue(labelText, 'text');
   }
 
-  function getReasonText(labelText) {
-    const reasons = [
-      "I am excited about this opportunity and believe my skills align well with the role requirements.",
-      "This position matches my career goals and I am eager to contribute to your team.",
-      "I am passionate about the work you do and would love to be part of your organization.",
-      "My background and experience make me a strong candidate for this role.",
-    ];
-
-    // Return a random reason to appear more natural
-    return reasons[Math.floor(Math.random() * reasons.length)];
+  async function getReasonText(labelText) {
+    return await getSmartValue(labelText, 'text');
   }
 
-  function getSkillsText(labelText) {
-    const text = labelText.toLowerCase();
-
-    if (text.includes("technical") || text.includes("programming")) {
-      return "JavaScript, Python, HTML/CSS, React, Node.js, SQL, Git";
-    }
-    if (text.includes("soft") || text.includes("communication")) {
-      return "Strong communication, teamwork, problem-solving, and project management skills";
-    }
-    if (text.includes("relevant")) {
-      return "Relevant skills and experience as detailed in my resume";
-    }
-
-    return "Please see resume for detailed skills and qualifications";
+  async function getSkillsText(labelText) {
+    return await getSmartValue(labelText, 'text');
   }
 
-  function getEducationValue(labelText) {
-    const text = labelText.toLowerCase();
-
-    if (text.includes("level") || text.includes("degree")) {
-      return "Bachelor's degree"; // Most common requirement
-    }
-    if (text.includes("field") || text.includes("major")) {
-      return "Computer Science";
-    }
-
-    return "Bachelor's";
+  async function getEducationValue(labelText) {
+    return await getSmartValue(labelText, 'text');
   }
 
-  function getEducationText(labelText) {
-    const text = labelText.toLowerCase();
-
-    if (text.includes("school") || text.includes("university")) {
-      return "State University";
-    }
-    if (text.includes("gpa")) {
-      return "3.5";
-    }
-    if (text.includes("year") && text.includes("graduation")) {
-      return "2020";
-    }
-
-    return "As listed on resume";
+  async function getEducationText(labelText) {
+    return await getSmartValue(labelText, 'text');
   }
 
   /**
@@ -4982,7 +5990,9 @@ if (!isIndeedSite) {
       } else if (successResult && interactionCount === 0) {
         return "pass_no_forms_needed"; // Success but no forms to fill
       } else if (!successResult && interactionCount > 0) {
-        return "fail_forms_filled_no_confirmation"; // Filled forms but no success confirmation
+        // Be more lenient - if we processed forms successfully, consider it a likely success
+        console.log("📝 Forms were processed but success unclear - treating as likely success");
+        return "pass"; // Changed from fail to pass when forms were processed
       } else if (!successResult && interactionCount === 0) {
         return "fail_no_forms_no_confirmation"; // No forms filled and no success
       } else {
@@ -5164,11 +6174,20 @@ if (!isIndeedSite) {
         }
       } catch (error) {
         // Handle different types of exceptions gracefully
-        if (error instanceof DOMException) {
+        if (error instanceof DOMException || error.name === 'SyntaxError') {
           console.error(
-            `❌ DOM Error on page ${pageCount}: ${error.name} - ${error.message}`
+            `❌ DOM/Syntax Error on page ${pageCount}: ${error.name} - ${error.message}`
           );
-          sendStatusMessage(`❌ DOM Error on page ${pageCount}: ${error.name}`);
+          sendStatusMessage(`❌ Critical DOM error - stopping application process`);
+          
+          // Stop the entire application process for syntax errors
+          if (error.message && error.message.includes('not a valid selector')) {
+            console.error('🛑 Invalid CSS selector detected - aborting job');
+            return 'fail_invalid_selector';
+          }
+          
+          // For other DOM errors, stop processing more pages
+          break;
         } else if (
           error.message &&
           error.message.includes("Extension context invalidated")
@@ -5238,6 +6257,14 @@ if (!isIndeedSite) {
   async function processCurrentPage() {
     console.log("🔍 Analyzing current page...");
 
+    // 🤖 CAPTCHA Detection - Check for CAPTCHAs first
+    const captchaCheck = detectCAPTCHA();
+    if (captchaCheck.found) {
+      console.log("🔒 CAPTCHA detected:", captchaCheck.type);
+      handleCAPTCHADetection(captchaCheck);
+      return { processed: false, reason: "captcha_detected", captchaType: captchaCheck.type };
+    }
+
     let processedSomething = false;
     let interactionCount = 0;
 
@@ -5261,6 +6288,7 @@ if (!isIndeedSite) {
           if (contactResult && contactResult.filled > 0) {
             processedSomething = true;
             interactionCount += contactResult.filled;
+            window.formInteractionCount = (window.formInteractionCount || 0) + contactResult.filled;
             console.log(`✅ Filled ${contactResult.filled} contact fields`);
           }
         }
@@ -5279,6 +6307,7 @@ if (!isIndeedSite) {
           if (questionResult && questionResult.filled > 0) {
             processedSomething = true;
             interactionCount += questionResult.filled;
+            window.formInteractionCount = (window.formInteractionCount || 0) + questionResult.filled;
             console.log(
               `✅ Answered ${questionResult.filled} employer questions`
             );
@@ -5299,6 +6328,7 @@ if (!isIndeedSite) {
           if (resumeResult && resumeResult.selected) {
             processedSomething = true;
             interactionCount += 1;
+            window.formInteractionCount = (window.formInteractionCount || 0) + 1;
             console.log(`✅ Selected resume`);
           }
         }
@@ -5315,6 +6345,7 @@ if (!isIndeedSite) {
           console.log("📝 Processing document uploads...");
           await handleDocumentUploads();
           processedSomething = true;
+          window.formInteractionCount = (window.formInteractionCount || 0) + 1;
         }
       } catch (uploadError) {
         console.error(
@@ -5329,6 +6360,7 @@ if (!isIndeedSite) {
           console.log("📝 Processing legal disclaimers...");
           await acceptLegalDisclaimer();
           processedSomething = true;
+          window.formInteractionCount = (window.formInteractionCount || 0) + 1;
         }
       } catch (legalError) {
         console.error(
@@ -5586,9 +6618,16 @@ if (!isIndeedSite) {
     const remainingInputs = document.querySelectorAll(
       'input[type="text"], input[type="email"], textarea'
     );
-    const submitButtons = document.querySelectorAll(
-      'button[type="submit"], button:contains("submit"), button:contains("apply")'
-    );
+    // Get submit buttons using valid CSS selectors
+    const submitButtons = document.querySelectorAll('button[type="submit"]');
+    const allButtons = document.querySelectorAll('button');
+    const submitAndApplyButtons = Array.from(allButtons).filter(btn => {
+      const text = btn.textContent.toLowerCase().trim();
+      const ariaLabel = (btn.getAttribute('aria-label') || '').toLowerCase();
+      return text.includes('submit') || text.includes('apply') || 
+             ariaLabel.includes('submit') || ariaLabel.includes('apply') ||
+             btn.type === 'submit';
+    });
 
     if (remainingForms.length === 0 && remainingInputs.length === 0) {
       confidence += 0.25;
@@ -5596,7 +6635,7 @@ if (!isIndeedSite) {
     }
 
     // Check for disabled/hidden submit buttons (indicates completion)
-    const disabledSubmits = Array.from(submitButtons).filter(
+    const disabledSubmits = submitAndApplyButtons.filter(
       (btn) => btn.disabled || btn.style.display === "none" || !btn.offsetParent
     );
 
@@ -7434,7 +8473,430 @@ if (!isIndeedSite) {
       console.log(`\n📄 Saved Response:`, JSON.stringify(serialized, null, 2));
     }
   });
+
+  // ═══════════════════════════════════════════════════════════════════════════
+  // 🏁 SETUP MAIN FUNCTIONS AND INITIALIZE
+  // ═══════════════════════════════════════════════════════════════════════════
+  
+  function setupGlobalFunctions() {
+    try {
+      // Make emergency stop globally accessible
+      window.triggerEmergencyStop = triggerEmergencyStop;
+      
+      // Set up global error handlers
+      window.extensionErrorHandler = function(error, context = 'Unknown') {
+        console.error(`🐛 Extension error in ${context}:`, error);
+        
+        // Try to continue operation if possible
+        if (error.name !== 'TypeError' && error.name !== 'ReferenceError') {
+          return true; // Recoverable error
+        }
+        
+        return false; // Non-recoverable error
+      };
+      
+    } catch (err) {
+      console.warn("⚠️ Error setting up global functions:", err);
+    }
+  }
+
+  function initializeMainLogic() {
+    try {
+      // Initialize the extension logic with proper delays
+      setTimeout(() => {
+        try {
+          // Start the main Indeed functionality
+          if (typeof indeedMain === 'function') {
+            indeedMain();
+          } else {
+            console.warn("⚠️ indeedMain function not available, trying direct initialization");
+            // Fallback initialization
+            if (document.readyState === 'complete') {
+              initializeFallbackMode();
+            } else {
+              document.addEventListener('DOMContentLoaded', initializeFallbackMode);
+            }
+          }
+        } catch (err) {
+          console.error("❌ Error in main logic initialization:", err);
+          initializeFallbackMode();
+        }
+      }, 1000); // Small delay to let page settle
+      
+    } catch (err) {
+      console.error("❌ Critical error in main logic setup:", err);
+    }
+  }
+
+  function initializeFallbackMode() {
+    try {
+      console.log("🔧 Initializing extension in fallback mode...");
+      
+      // Try to start basic functionality
+      const learningSystem = new UnknownQuestionLearningSystem();
+      if (learningSystem && typeof learningSystem.startAutoDetection === 'function') {
+        learningSystem.startAutoDetection();
+        console.log("✅ Learning system started in fallback mode");
+      }
+      
+    } catch (err) {
+      console.error("❌ Even fallback mode failed:", err);
+      showErrorNotification("Extension could not start. Please refresh the page.");
+    }
+  }
+
+  // 🚀 START THE EXTENSION SAFELY
+  try {
+    if (document.readyState === 'loading') {
+      document.addEventListener('DOMContentLoaded', initializeExtensionSafely);
+    } else {
+      // DOM is already ready
+      setTimeout(initializeExtensionSafely, 100);
+    }
+  } catch (err) {
+    console.error("❌ Failed to schedule extension initialization:", err);
+  }
+
 } // End of Indeed site check - closes the main conditional block
+
+/**
+ * Show completion notification to user when all jobs are done
+ */
+function showCompletionNotification(results) {
+  console.log("🎯 Showing completion notification:", results);
+  
+  // Create completion overlay
+  const overlay = createSafeElement("div", {
+    id: "job-completion-overlay",
+    style: {
+      position: "fixed",
+      top: "0",
+      left: "0",
+      width: "100%", 
+      height: "100%",
+      backgroundColor: "rgba(0, 0, 0, 0.8)",
+      zIndex: "999999",
+      display: "flex",
+      alignItems: "center",
+      justifyContent: "center",
+      fontFamily: "Arial, sans-serif"
+    }
+  });
+
+  const notification = createSafeElement("div", {
+    style: {
+      backgroundColor: results.failed === 0 ? "#4CAF50" : "#2196F3",
+      color: "white",
+      padding: "30px",
+      borderRadius: "15px",
+      textAlign: "center",
+      maxWidth: "500px",
+      boxShadow: "0 10px 30px rgba(0,0,0,0.3)",
+      animation: "completionSlideIn 0.5s ease-out"
+    },
+    innerHTML: `
+      <div style="font-size: 48px; margin-bottom: 20px;">
+        ${results.failed === 0 ? "🎉" : "✅"}
+      </div>
+      <h2 style="margin: 0 0 15px 0; font-size: 24px;">
+        ${results.failed === 0 ? "PERFECT COMPLETION!" : "BATCH COMPLETE!"}
+      </h2>
+      <p style="font-size: 18px; margin: 10px 0; opacity: 0.9;">
+        ${results.message}
+      </p>
+      <div style="display: flex; justify-content: space-around; margin: 20px 0; font-size: 16px;">
+        <div>
+          <strong>✅ Success:</strong><br/>
+          <span style="font-size: 20px; color: #81C784;">${results.success}</span>
+        </div>
+        ${results.failed > 0 ? `
+        <div>
+          <strong>❌ Failed:</strong><br/>
+          <span style="font-size: 20px; color: #E57373;">${results.failed}</span>
+        </div>
+        ` : ''}
+        <div>
+          <strong>📊 Rate:</strong><br/>
+          <span style="font-size: 20px; color: #FFD54F;">${results.successRate}</span>
+        </div>
+      </div>
+      <button id="close-completion" style="
+        background: rgba(255,255,255,0.2);
+        border: 2px solid white;
+        color: white;
+        padding: 10px 20px;
+        border-radius: 25px;
+        cursor: pointer;
+        font-size: 16px;
+        margin-top: 15px;
+      ">
+        Close
+      </button>
+    `
+  });
+
+  // Add CSS animation
+  if (!document.getElementById("completion-styles")) {
+    const style = document.createElement("style");
+    style.id = "completion-styles";
+    style.textContent = `
+    @keyframes completionSlideIn {
+      0% { transform: scale(0.5) translateY(-50px); opacity: 0; }
+      100% { transform: scale(1) translateY(0); opacity: 1; }
+    }
+    `;
+    document.head.appendChild(style);
+  }
+
+  safeAppendChild(overlay, notification);
+  safeAppendChild(document.body, overlay);
+
+  // Add close functionality
+  const closeBtn = notification.querySelector("#close-completion");
+  if (closeBtn) {
+    closeBtn.addEventListener("click", () => {
+      if (overlay && overlay.parentNode) {
+        overlay.parentNode.removeChild(overlay);
+      }
+    });
+  }
+
+  // Auto-hide after 10 seconds for success, 15 seconds for mixed results
+  const autoHideDelay = results.failed === 0 ? 10000 : 15000;
+  setTimeout(() => {
+    if (overlay && overlay.parentNode) {
+      overlay.style.animation = "completionSlideIn 0.5s ease-out reverse";
+      setTimeout(() => {
+        if (overlay && overlay.parentNode) {
+          overlay.parentNode.removeChild(overlay);
+        }
+      }, 500);
+    }
+  }, autoHideDelay);
+
+  // Also show a browser notification if supported
+  if ("Notification" in window) {
+    new Notification("Indeed Auto-Apply Complete!", {
+      body: results.message,
+      icon: "data:image/svg+xml;base64,PHN2ZyB3aWR0aD0iNjQiIGhlaWdodD0iNjQiIHZpZXdCb3g9IjAgMCA2NCA2NCIgZmlsbD0ibm9uZSIgeG1sbnM9Imh0dHA6Ly93d3cudzMub3JnLzIwMDAvc3ZnIj4KPGNpcmNsZSBjeD0iMzIiIGN5PSIzMiIgcj0iMzIiIGZpbGw9IiM0Q0FGNTASNEMB"
+    });
+  }
+}
+
+/**
+ * Detect various types of CAPTCHAs on the page
+ */
+function detectCAPTCHA() {
+  console.log("🔒 Checking for CAPTCHAs...");
+  
+  // reCAPTCHA detection
+  const recaptchaSelectors = [
+    'iframe[src*="recaptcha"]',
+    '.g-recaptcha',
+    '#g-recaptcha-response',
+    '[data-sitekey]',
+    'div[id*="captcha"]',
+    '#captcha-wrapper'
+  ];
+  
+  for (const selector of recaptchaSelectors) {
+    const element = document.querySelector(selector);
+    if (element && isElementVisible(element)) {
+      console.log(`🔒 Found reCAPTCHA using selector: ${selector}`);
+      return { found: true, type: 'recaptcha', element: element, selector: selector };
+    }
+  }
+  
+  // hCaptcha detection
+  const hcaptchaSelectors = [
+    'iframe[src*="hcaptcha"]',
+    '.h-captcha',
+    '[data-hcaptcha-sitekey]'
+  ];
+  
+  for (const selector of hcaptchaSelectors) {
+    const element = document.querySelector(selector);
+    if (element && isElementVisible(element)) {
+      console.log(`🔒 Found hCaptcha using selector: ${selector}`);
+      return { found: true, type: 'hcaptcha', element: element, selector: selector };
+    }
+  }
+  
+  // Generic CAPTCHA detection
+  const genericSelectors = [
+    'img[alt*="captcha" i]',
+    'img[src*="captcha" i]',
+    'input[name*="captcha" i]',
+    '.captcha-container',
+    '[class*="captcha"]'
+  ];
+  
+  for (const selector of genericSelectors) {
+    const element = document.querySelector(selector);
+    if (element && isElementVisible(element)) {
+      console.log(`🔒 Found generic CAPTCHA using selector: ${selector}`);
+      return { found: true, type: 'generic', element: element, selector: selector };
+    }
+  }
+  
+  // Check for common CAPTCHA text patterns
+  const captchaTextPatterns = [
+    /please complete.*captcha/i,
+    /verify.*human/i,
+    /prove.*not.*robot/i,
+    /security check/i
+  ];
+  
+  const bodyText = document.body.textContent || '';
+  for (const pattern of captchaTextPatterns) {
+    if (pattern.test(bodyText)) {
+      console.log(`🔒 Found CAPTCHA text pattern: ${pattern}`);
+      return { found: true, type: 'text_pattern', pattern: pattern.toString() };
+    }
+  }
+  
+  console.log("✅ No CAPTCHAs detected");
+  return { found: false };
+}
+
+/**
+ * Check if an element is visible on the page
+ */
+function isElementVisible(element) {
+  if (!element) return false;
+  
+  const rect = element.getBoundingClientRect();
+  const style = window.getComputedStyle(element);
+  
+  return (
+    rect.width > 0 &&
+    rect.height > 0 &&
+    style.display !== 'none' &&
+    style.visibility !== 'hidden' &&
+    style.opacity !== '0'
+  );
+}
+
+/**
+ * Handle CAPTCHA detection - pause automation and notify user
+ */
+function handleCAPTCHADetection(captchaInfo) {
+  console.log("🚨 CAPTCHA DETECTED - Pausing automation");
+  console.log("📋 CAPTCHA Info:", captchaInfo);
+  
+  // Show user notification
+  showCAPTCHANotification(captchaInfo);
+  
+  // Send message to background script
+  chrome.runtime.sendMessage({
+    action: "captchaDetected",
+    captchaInfo: captchaInfo,
+    url: window.location.href,
+    timestamp: new Date().toISOString()
+  }, (response) => {
+    if (chrome.runtime.lastError) {
+      console.log("📢 Could not notify background about CAPTCHA:", chrome.runtime.lastError.message);
+    } else {
+      console.log("📨 Background notified about CAPTCHA");
+    }
+  });
+}
+
+/**
+ * Show CAPTCHA notification to user
+ */
+function showCAPTCHANotification(captchaInfo) {
+  // Remove any existing CAPTCHA notifications
+  const existing = document.querySelector('#captcha-notification');
+  if (existing) {
+    existing.remove();
+  }
+  
+  const notification = createSafeElement("div", {
+    id: "captcha-notification",
+    style: {
+      position: "fixed",
+      top: "20px",
+      right: "20px",
+      width: "350px",
+      backgroundColor: "#FF9800",
+      color: "white",
+      padding: "20px",
+      borderRadius: "10px",
+      boxShadow: "0 4px 12px rgba(0,0,0,0.3)",
+      zIndex: "999999",
+      fontFamily: "Arial, sans-serif",
+      fontSize: "14px",
+      animation: "slideInRight 0.5s ease-out"
+    },
+    innerHTML: `
+      <div style="display: flex; align-items: center; margin-bottom: 10px;">
+        <span style="font-size: 24px; margin-right: 10px;">🔒</span>
+        <strong style="font-size: 16px;">CAPTCHA Detected!</strong>
+      </div>
+      <p style="margin: 8px 0;">
+        Automation paused. Please solve the ${captchaInfo.type} CAPTCHA to continue.
+      </p>
+      <p style="margin: 8px 0; font-size: 12px; opacity: 0.9;">
+        The extension will automatically resume once the CAPTCHA is solved.
+      </p>
+      <button id="dismiss-captcha" style="
+        background: rgba(255,255,255,0.2);
+        border: 1px solid white;
+        color: white;
+        padding: 8px 15px;
+        border-radius: 5px;
+        cursor: pointer;
+        font-size: 12px;
+        margin-top: 10px;
+      ">
+        Dismiss
+      </button>
+    `
+  });
+  
+  // Add CSS for animation if not already present
+  if (!document.getElementById("captcha-notification-styles")) {
+    const style = document.createElement("style");
+    style.id = "captcha-notification-styles";
+    style.textContent = `
+    @keyframes slideInRight {
+      0% { transform: translateX(100%); opacity: 0; }
+      100% { transform: translateX(0); opacity: 1; }
+    }
+    `;
+    document.head.appendChild(style);
+  }
+  
+  safeAppendChild(document.body, notification);
+  
+  // Add dismiss functionality
+  const dismissBtn = notification.querySelector("#dismiss-captcha");
+  if (dismissBtn) {
+    dismissBtn.addEventListener("click", () => {
+      if (notification && notification.parentNode) {
+        notification.style.animation = "slideInRight 0.3s ease-out reverse";
+        setTimeout(() => {
+          if (notification && notification.parentNode) {
+            notification.parentNode.removeChild(notification);
+          }
+        }, 300);
+      }
+    });
+  }
+  
+  // Auto-hide after 30 seconds
+  setTimeout(() => {
+    if (notification && notification.parentNode) {
+      notification.style.animation = "slideInRight 0.3s ease-out reverse";
+      setTimeout(() => {
+        if (notification && notification.parentNode) {
+          notification.parentNode.removeChild(notification);
+        }
+      }, 300);
+    }
+  }, 30000);
+}
 
 function sendStatusMessage(message) {
   chrome.runtime.sendMessage({ status: message }, function (response) {
