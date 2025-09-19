@@ -72,12 +72,16 @@ stopBtn.addEventListener("click", (e) => {
   if (e.target && e.target.id === 'stop-btn') {
     console.log("Stop button clicked");
     liveTogle(false);
-    
+
     // Send stop message to content script
     chrome.tabs.query({active: true, currentWindow: true}, (tabs) => {
       chrome.tabs.sendMessage(tabs[0].id, {
         action: "stopProcess"
       }, (response) => {
+        if (response && response.status === "automation_stopped") {
+          console.log("Automation has been stopped.");
+          liveTogle(false);
+        }
         if (chrome.runtime.lastError) {
           console.error("Error:", chrome.runtime.lastError.message);
         } else {
@@ -87,3 +91,6 @@ stopBtn.addEventListener("click", (e) => {
     });
   }
 });
+
+// Listen for automation stopped status from content script
+

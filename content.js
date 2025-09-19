@@ -446,6 +446,13 @@ if (!isIndeedSite) {
     }
   });
 
+  chrome.runtime.onMessage.addListener((message, sender, sendResponse) => { 
+    if (message.action === "stopProcess") {
+      triggerEmergencyStop();
+      sendResponse({ status: "automation_stopped" });
+    }
+  });
+
   // Console command for emergency stop (developers can type: stopAutomation() in console)
   window.stopAutomation = triggerEmergencyStop;
 
