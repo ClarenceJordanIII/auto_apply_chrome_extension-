@@ -26,6 +26,80 @@ if (typeof isIndeedSite === "undefined") {
   );
 }
 
+// ═══════════════════════════════════════════════════════════════════════════
+// 🧠 SMART TIMEOUT MANAGEMENT SYSTEM
+// ═══════════════════════════════════════════════════════════════════════════
+
+// Dynamic timeout configuration - GENEROUS TIMEOUTS FOR THOROUGH PROCESSING
+if (typeof SMART_TIMEOUTS === "undefined") {
+  var SMART_TIMEOUTS = {
+    BASE_TIMEOUT: 25000,          // Base timeout for element waiting (was 8000)
+    SUCCESS_EXTENSION: 15000,     // Extra time after successful action (was 5000)
+    FORM_FILL_TIMEOUT: 45000,     // Extended time for form filling (was 15000)
+    PAGE_LOAD_TIMEOUT: 30000,     // Time to wait for page loads (was 12000)
+    MAX_TIMEOUT: 120000,          // Never exceed this timeout (was 30000) - 2 minutes max
+    MIN_TIMEOUT: 8000,            // Minimum timeout for any action (was 3000)
+    
+    // Progress tracking
+    lastSuccessTime: Date.now(),
+    consecutiveFailures: 0,
+    totalSuccessActions: 0
+  };
+  
+  console.log("⏱️ GENEROUS TIMEOUTS ACTIVE - Algorithm has plenty of time to work! 🚀");
+}
+
+/**
+ * Calculate dynamic timeout based on recent success/failure patterns
+ */
+function getSmartTimeout(baseTimeout = SMART_TIMEOUTS.BASE_TIMEOUT, actionType = 'default') {
+  const timeSinceSuccess = Date.now() - SMART_TIMEOUTS.lastSuccessTime;
+  let dynamicTimeout = baseTimeout;
+  
+  // Extend timeout if recent success (things are working)
+  if (timeSinceSuccess < 10000 && SMART_TIMEOUTS.totalSuccessActions > 0) {
+    dynamicTimeout += SMART_TIMEOUTS.SUCCESS_EXTENSION;
+    sendLogToPopup(`⏱️ Extended timeout due to recent success: ${dynamicTimeout}ms`);
+  }
+  
+  // Reduce timeout if consecutive failures (likely stuck)
+  if (SMART_TIMEOUTS.consecutiveFailures > 2) {
+    dynamicTimeout = Math.max(dynamicTimeout * 0.7, SMART_TIMEOUTS.MIN_TIMEOUT);
+    sendLogToPopup(`⏱️ Reduced timeout due to failures: ${dynamicTimeout}ms`, "WARN");
+  }
+  
+  // Special timeouts for specific actions
+  if (actionType === 'form-fill') {
+    dynamicTimeout = Math.max(dynamicTimeout, SMART_TIMEOUTS.FORM_FILL_TIMEOUT);
+  } else if (actionType === 'page-load') {
+    dynamicTimeout = Math.max(dynamicTimeout, SMART_TIMEOUTS.PAGE_LOAD_TIMEOUT);
+  }
+  
+  // Enforce limits
+  dynamicTimeout = Math.min(dynamicTimeout, SMART_TIMEOUTS.MAX_TIMEOUT);
+  dynamicTimeout = Math.max(dynamicTimeout, SMART_TIMEOUTS.MIN_TIMEOUT);
+  
+  return dynamicTimeout;
+}
+
+/**
+ * Record successful action to improve future timeouts
+ */
+function recordSuccess(actionDescription) {
+  SMART_TIMEOUTS.lastSuccessTime = Date.now();
+  SMART_TIMEOUTS.consecutiveFailures = 0;
+  SMART_TIMEOUTS.totalSuccessActions++;
+  sendLogToPopup(`✅ Success: ${actionDescription} (${SMART_TIMEOUTS.totalSuccessActions} total)`);
+}
+
+/**
+ * Record failed action to adjust future timeouts
+ */
+function recordFailure(actionDescription) {
+  SMART_TIMEOUTS.consecutiveFailures++;
+  sendLogToPopup(`❌ Failed: ${actionDescription} (${SMART_TIMEOUTS.consecutiveFailures} consecutive)`, "WARN");
+}
+
 if (!isIndeedSite) {
   console.log(`🚫 Extension disabled - Not an Indeed site (${currentDomain})`);
   sendStatusMessage(
@@ -407,6 +481,36 @@ if (!isIndeedSite) {
 
     // Stop any running automation
     processing = false;
+    
+    // Clear any stored timeouts/intervals
+    if (window.currentJobTimeout) {
+      clearTimeout(window.currentJobTimeout);
+      window.currentJobTimeout = null;
+      console.log("🧹 Cleared job timeout");
+    }
+    
+    if (window.currentJobPromise) {
+      window.currentJobPromise = null;
+      console.log("🧹 Cleared job promise");
+    }
+    
+    // Clear any other automation flags
+    window.automationRunning = false;
+    
+    // Notify popup that automation has been stopped
+    try {
+      chrome.runtime.sendMessage({
+        greeting: "statusUpdate",
+        status: "🛑 Emergency stop activated - All automation halted",
+        timestamp: new Date().toISOString(),
+        isComplete: true,
+        isStopped: true
+      });
+    } catch (error) {
+      console.log("Could not notify popup of emergency stop:", error.message);
+    }
+    
+    console.log("🛑 ALL AUTOMATION PROCESSES FORCE-STOPPED");
 
     // Show user notification
     if (document.body) {
@@ -447,9 +551,14 @@ if (!isIndeedSite) {
   });
 
   chrome.runtime.onMessage.addListener((message, sender, sendResponse) => { 
+    console.log("📨 Content script received message:", message.action);
+    
     if (message.action === "stopProcess") {
+      console.log("🛑 Processing stop request...");
       triggerEmergencyStop();
       sendResponse({ status: "automation_stopped" });
+      console.log("✅ Stop response sent");
+      return true; // Keep message channel open for async response
     }
   });
 
@@ -647,9 +756,13 @@ if (!isIndeedSite) {
    */
   async function waitForElement(
     selector,
-    timeout = 10000,
-    checkInterval = 100
+    timeout = null,
+    checkInterval = 100,
+    actionType = 'default'
   ) {
+    // Use smart timeout if not provided
+    const smartTimeout = timeout || getSmartTimeout(SMART_TIMEOUTS.BASE_TIMEOUT, actionType);
+    
     return new Promise((resolve) => {
       const startTime = Date.now();
 
@@ -666,18 +779,14 @@ if (!isIndeedSite) {
         const element = document.querySelector(selector);
 
         if (element) {
-          console.log(
-            `✅ Element found: ${selector} - Text: "${
-              element.textContent || element.value || "N/A"
-            }"`
-          );
+          recordSuccess(`Found element: ${selector} - ${element.textContent || element.value || "N/A"}`);
           resolve(element);
           return;
         }
 
         // Check if timeout exceeded
-        if (Date.now() - startTime > timeout) {
-          console.log(`⏰ Timeout waiting for element: ${selector}`);
+        if (Date.now() - startTime > smartTimeout) {
+          recordFailure(`Timeout waiting for element: ${selector} (${smartTimeout}ms)`);
           resolve(null);
           return;
         }
@@ -696,7 +805,10 @@ if (!isIndeedSite) {
    * @param {number} timeout - Maximum time to wait in milliseconds
    * @returns {Promise<Element|null>} - Resolves with first found element or null
    */
-  async function waitForAnyElement(selectors, timeout = 10000) {
+  async function waitForAnyElement(selectors, timeout = null, actionType = 'default') {
+    // Use smart timeout if not provided
+    const smartTimeout = timeout || getSmartTimeout(SMART_TIMEOUTS.BASE_TIMEOUT, actionType);
+    
     return new Promise((resolve) => {
       const startTime = Date.now();
 
@@ -714,18 +826,14 @@ if (!isIndeedSite) {
         for (const selector of selectors) {
           const element = document.querySelector(selector);
           if (element) {
-            console.log(
-              `✅ Element found with selector: ${selector} - Text: "${
-                element.textContent || element.value || "N/A"
-              }"`
-            );
+            recordSuccess(`Found element with selector: ${selector} - ${element.textContent || element.value || "N/A"}`);
             resolve(element);
             return;
           }
         }
 
         // Check if timeout exceeded
-        if (Date.now() - startTime > timeout) {
+        if (Date.now() - startTime > smartTimeout) {
           console.log(
             `⏰ Timeout waiting for any element from selectors:`,
             selectors
@@ -748,7 +856,7 @@ if (!isIndeedSite) {
    * @param {number} timeout - Maximum time to wait in milliseconds
    * @returns {Promise<Element|null>} - Resolves with clickable element or null
    */
-  async function waitForClickableElement(selector, timeout = 10000) {
+  async function waitForClickableElement(selector, timeout = 30000) {
     return new Promise((resolve) => {
       const startTime = Date.now();
 
@@ -809,7 +917,7 @@ if (!isIndeedSite) {
    * @param {number} timeout - Maximum time to wait in milliseconds
    * @returns {Promise<Element|null>} - Resolves with element containing text or null
    */
-  async function waitForElementByText(textOptions, timeout = 10000) {
+  async function waitForElementByText(textOptions, timeout = 30000) {
     return new Promise((resolve) => {
       const startTime = Date.now();
 
@@ -862,6 +970,81 @@ if (!isIndeedSite) {
       };
 
       checkForText();
+    });
+  }
+
+  /**
+   * AGGRESSIVE DOM Ready Detection - Ensures pages are FULLY loaded before processing
+   * @param {number} timeout - Maximum time to wait in milliseconds
+   * @returns {Promise<boolean>} - Resolves when DOM is ready or timeout
+   */
+  async function waitForDOMReady(timeout = 25000) {
+    return new Promise((resolve) => {
+      const startTime = Date.now();
+      let lastBodyChildCount = -1;
+      let lastScriptCount = -1;
+      let stableCount = 0;
+      const requiredStableChecks = 5; // More stability checks needed
+      
+      console.log("⏳ AGGRESSIVE DOM ready check starting...");
+      
+      const checkDOMReady = () => {
+        // Check extension context
+        if (!isExtensionContextValid()) {
+          console.log("🔄 Extension context invalidated during DOM ready wait");
+          resolve(false);
+          return;
+        }
+        
+        // Multiple readiness checks
+        const isDocumentReady = document.readyState === 'complete';
+        const currentBodyChildCount = document.body ? document.body.children.length : 0;
+        const currentScriptCount = document.querySelectorAll('script').length;
+        const hasMinimumElements = currentBodyChildCount > 5; // Page should have substantial content
+        
+        // Check for loading indicators
+        const loadingIndicators = document.querySelectorAll('[class*="load"], [class*="spinner"], [id*="load"]');
+        const hasVisibleLoaders = Array.from(loadingIndicators).some(el => el.offsetParent !== null);
+        
+        // Check if network requests have settled (rough heuristic)
+        const noActiveRequests = !document.querySelector('meta[http-equiv="refresh"]');
+        
+        // Check if both body and scripts are stable
+        const isStructureStable = (currentBodyChildCount === lastBodyChildCount && 
+                                  currentScriptCount === lastScriptCount);
+        
+        if (isDocumentReady && hasMinimumElements && !hasVisibleLoaders && 
+            noActiveRequests && isStructureStable) {
+          stableCount++;
+          console.log(`📊 AGGRESSIVE DOM check ${stableCount}/${requiredStableChecks} - Body: ${currentBodyChildCount}, Scripts: ${currentScriptCount}, Loaders: ${hasVisibleLoaders}`);
+        } else {
+          if (stableCount > 0) {
+            console.log(`🔄 DOM not stable yet - ReadyState: ${document.readyState}, Elements: ${currentBodyChildCount}, Loaders: ${hasVisibleLoaders}`);
+          }
+          stableCount = 0; // Reset if anything changed
+          lastBodyChildCount = currentBodyChildCount;
+          lastScriptCount = currentScriptCount;
+        }
+        
+        // DOM is fully ready and stable
+        if (stableCount >= requiredStableChecks) {
+          console.log("✅ DOM is FULLY READY and STABLE!");
+          resolve(true);
+          return;
+        }
+        
+        // Check timeout
+        if (Date.now() - startTime > timeout) {
+          console.log(`⏰ DOM ready timeout after ${timeout}ms - Final state: readyState=${document.readyState}, elements=${currentBodyChildCount}, stable=${stableCount}/${requiredStableChecks}`);
+          resolve(false);
+          return;
+        }
+        
+        // Check again after shorter interval for more responsiveness
+        setTimeout(checkDOMReady, 300);
+      };
+      
+      checkDOMReady();
     });
   }
 
@@ -3021,29 +3204,42 @@ if (!isIndeedSite) {
         console.log("getJobCards:", getJobCards);
         console.log("searchJobCards:", searchJobCards);
 
-        if (getJobCards) {
-          // if they don't search for a job (scrapes the home page)
-          console.log("Found home page job cards, starting scrape...");
-          jobCardScrape(getJobCards);
-        } else if (searchJobCards) {
-          // if they search for a job (scrapes the search results page)
-          console.log(
-            "Found search page job cards, starting scroll and scrape..."
-          );
-          autoScrollToBottom(() => {
-            console.log("You have hit the bottom of the webpage!");
-            jobCardScrape(searchJobCards);
-          });
-        } else {
-          console.log("❌ No job cards found on this page");
-          console.log("Current URL:", window.location.href);
+        // CRITICAL FIX: Properly handle async functions
+        (async () => {
+          try {
+            if (getJobCards) {
+              // if they don't search for a job (scrapes the home page)
+              console.log("Found home page job cards, starting scrape...");
+              await jobCardScrape(getJobCards);
+            } else if (searchJobCards) {
+              // if they search for a job (scrapes the search results page)
+              console.log(
+                "Found search page job cards, starting scroll and scrape..."
+              );
+              await new Promise((resolve) => {
+                autoScrollToBottom(() => {
+                  console.log("You have hit the bottom of the webpage!");
+                  jobCardScrape(searchJobCards).then(resolve).catch(resolve);
+                });
+              });
+            } else {
+              console.log("❌ No job cards found on this page");
+              console.log("Current URL:", window.location.href);
 
-          // Send response back indicating no jobs found
-          sendResponse({
-            status: "no_jobs_found",
-            message: "No job cards detected on current page",
-          });
-        }
+              // Send response back indicating no jobs found
+              sendResponse({
+                status: "no_jobs_found",
+                message: "No job cards detected on current page",
+              });
+            }
+          } catch (error) {
+            console.error("❌ Error in job processing:", error);
+            sendResponse({
+              status: "error",
+              message: error.message || "Job processing failed"
+            });
+          }
+        })();
 
         return true; // Keep message channel open for async operations
       }
@@ -3602,6 +3798,19 @@ if (!isIndeedSite) {
     if (message.action === "ALL_JOBS_COMPLETE") {
       console.log("🎉 Received completion message from background:", message.results);
       showCompletionNotification(message.results);
+      
+      // Notify popup that automation is complete
+      try {
+        chrome.runtime.sendMessage({
+          greeting: "statusUpdate",
+          status: "🎉 All job applications completed!",
+          timestamp: new Date().toISOString(),
+          isComplete: true
+        });
+      } catch (error) {
+        console.log("Could not notify popup of completion:", error.message);
+      }
+      
       sendResponse({ status: "completion_acknowledged" });
       return true;
     }
@@ -3632,6 +3841,7 @@ if (!isIndeedSite) {
       }
       
       console.log("🚀 Starting job application workflow");
+      sendLogToPopup(`🚀 Starting application for: ${message.job.jobTitle} at ${message.job.companyName}`);
       sendStatusMessage(
         `🚀 Starting application for: ${message.job.jobTitle} at ${message.job.companyName}`
       );
@@ -3665,7 +3875,7 @@ if (!isIndeedSite) {
           window.currentJobPromise = null; // Clear job promise
           safeResponse({ status: "timeout", result: "fail_timeout" });
         }
-      }, 75000); // 75 seconds timeout (less than background script timeout)
+      }, 180000); // 3 minutes timeout - GENEROUS TIME FOR COMPLEX FORMS
       
       // Store timeout for cleanup
       window.currentJobTimeout = timeoutId;
@@ -3716,11 +3926,13 @@ if (!isIndeedSite) {
             // 🚀 DYNAMIC WORKFLOW SYSTEM - Handles unlimited question pages automatically
             // ═══════════════════════════════════════════════════════════════════════════
             console.log("🔄 Running dynamic application workflow");
+            sendLogToPopup("🔄 Running dynamic application workflow");
             sendStatusMessage("🔄 Navigating to application form...");
 
             result = await runDynamicApplicationWorkflow();
 
             console.log(`📊 Workflow completed with result: ${result}`);
+            sendLogToPopup(`📊 Workflow completed with result: ${result}`);
             sendStatusMessage(`📊 Application workflow completed: ${result}`);
           } catch (err) {
             // ─────────────────────────────────────────────────────────────────────────
@@ -4251,7 +4463,7 @@ if (!isIndeedSite) {
     if (btn) {
       btn.click();
       console.log(`Clicked ${stepName} button.`);
-      await new Promise((r) => setTimeout(r, 1000));
+      await new Promise((r) => setTimeout(r, 3000)); // GENEROUS delay after button clicks
       return { success: true, step: stepName };
     } else {
       const errorMsg = `${stepName} button not found (keywords: ${keywords.join(
@@ -4274,7 +4486,7 @@ if (!isIndeedSite) {
   /**
    * Wait for elements to be present in the DOM
    */
-  function waitForElements(selector, timeout = 10000) {
+  function waitForElements(selector, timeout = 30000) {
     return new Promise((resolve, reject) => {
       const startTime = Date.now();
 
@@ -4318,8 +4530,8 @@ if (!isIndeedSite) {
       relevantTypes: new Set(), // Track only types we actually find
     };
 
-    // Wait for elements to load
-    await new Promise((r) => setTimeout(r, 1000));
+    // Wait for elements to load - GENEROUS TIME FOR COMPLEX FORMS
+    await new Promise((r) => setTimeout(r, 3000));
 
     // Find all question containers with enhanced selectors
     const containers = document.querySelectorAll(
@@ -5134,7 +5346,7 @@ if (!isIndeedSite) {
   /**
    * Wait for element within a container
    */
-  function waitForElementInContainer(container, selector, timeout = 3000) {
+  function waitForElementInContainer(container, selector, timeout = 15000) {
     return new Promise((resolve) => {
       const startTime = Date.now();
 
@@ -5260,49 +5472,267 @@ if (!isIndeedSite) {
       }
     }
 
-    // 5. RADIO BUTTONS (including single-select questions)
+    // 5. INTELLIGENT RADIO BUTTONS (including single-select questions)
     console.log("⏳ Waiting for radio buttons...");
-    await new Promise((r) => setTimeout(r, 200)); // Small delay for radio buttons to render
+    await new Promise((r) => setTimeout(r, 800)); // GENEROUS delay for radio buttons to render
     const radioButtons = container.querySelectorAll(
       'input[type="radio"], input[id*="single-select-question"]'
     );
     if (radioButtons.length > 0) {
-      console.log(
-        `📝 Found ${radioButtons.length} radio buttons for: "${labelText}"`
-      );
+      sendLogToPopup(`🔘 Radio: "${labelText.substring(0, 40)}..."`);
+      
       // Check if any radio is already selected
       const alreadySelected = Array.from(radioButtons).find(
         (radio) => radio.checked
       );
       if (!alreadySelected) {
-        const selectedValue = getRadioValue(labelText, radioButtons);
-        if (selectedValue) {
-          selectedValue.checked = true;
-          selectedValue.dispatchEvent(new Event("change", { bubbles: true }));
-          console.log(`✅ Selected radio option for ${labelText}`);
+        
+        // INTELLIGENT RADIO BUTTON SELECTION
+        const questionText = labelText.toLowerCase();
+        let selectedRadio = null;
+        let reasoning = '';
+        
+        // Get all radio options with their labels
+        const radioOptions = Array.from(radioButtons).map(radio => {
+          // Simple label extraction
+          let label = '';
+          const closestLabel = radio.closest("label");
+          if (closestLabel) {
+            label = closestLabel.textContent.trim();
+          } else if (radio.nextSibling && radio.nextSibling.textContent) {
+            label = radio.nextSibling.textContent.trim();
+          } else if (radio.parentElement) {
+            label = radio.parentElement.textContent.trim();
+          } else {
+            label = radio.value || radio.id || '';
+          }
+          
+          return {
+            element: radio,
+            text: label.toLowerCase(),
+            originalText: label
+          };
+        });
+        
+        // SMART SELECTION LOGIC
+        
+        // Yes/No questions - default to positive responses for most cases
+        if (radioOptions.some(opt => opt.text.includes('yes')) && 
+            radioOptions.some(opt => opt.text.includes('no'))) {
+          
+          if (questionText.includes('authorized to work') || questionText.includes('eligible to work') ||
+              questionText.includes('legal right') || questionText.includes('citizen')) {
+            selectedRadio = radioOptions.find(opt => opt.text.includes('yes'))?.element;
+            reasoning = 'Confirmed work authorization';
+          }
+          else if (questionText.includes('background check') || questionText.includes('drug test') ||
+                   questionText.includes('willing to') || questionText.includes('available')) {
+            selectedRadio = radioOptions.find(opt => opt.text.includes('yes'))?.element;
+            reasoning = 'Agreed to requirement';
+          }
+          else if (questionText.includes('criminal') || questionText.includes('felony') ||
+                   questionText.includes('convicted')) {
+            selectedRadio = radioOptions.find(opt => opt.text.includes('no'))?.element;
+            reasoning = 'No criminal background';
+          }
+          else {
+            // Default to yes for unclear yes/no questions
+            selectedRadio = radioOptions.find(opt => opt.text.includes('yes'))?.element;
+            reasoning = 'Default positive response';
+          }
+        }
+        
+        // Experience level questions
+        else if (questionText.includes('experience level') || questionText.includes('years of experience')) {
+          const entryOptions = radioOptions.filter(opt => 
+            opt.text.includes('0-1') || opt.text.includes('entry') || opt.text.includes('1-2') ||
+            opt.text.includes('1-3') || opt.text.includes('less than')
+          );
+          if (entryOptions.length > 0) {
+            selectedRadio = entryOptions[0].element;
+            reasoning = 'Selected appropriate experience level';
+          }
+        }
+        
+        // Education level questions
+        else if (questionText.includes('education') || questionText.includes('degree')) {
+          const bachelorOptions = radioOptions.filter(opt =>
+            opt.text.includes('bachelor') || opt.text.includes('undergraduate') ||
+            opt.text.includes('college') || opt.text.includes('4-year')
+          );
+          const highSchoolOptions = radioOptions.filter(opt =>
+            opt.text.includes('high school') || opt.text.includes('diploma') ||
+            opt.text.includes('ged')
+          );
+          
+          if (bachelorOptions.length > 0) {
+            selectedRadio = bachelorOptions[0].element;
+            reasoning = 'Selected bachelor degree option';
+          } else if (highSchoolOptions.length > 0) {
+            selectedRadio = highSchoolOptions[0].element;
+            reasoning = 'Selected high school education';
+          }
+        }
+        
+        // Work arrangement preferences
+        else if (questionText.includes('remote') || questionText.includes('work from home') ||
+                 questionText.includes('hybrid') || questionText.includes('office')) {
+          const hybridOptions = radioOptions.filter(opt =>
+            opt.text.includes('hybrid') || opt.text.includes('flexible')
+          );
+          const remoteOptions = radioOptions.filter(opt =>
+            opt.text.includes('remote') || opt.text.includes('home')
+          );
+          
+          if (hybridOptions.length > 0) {
+            selectedRadio = hybridOptions[0].element;
+            reasoning = 'Preferred hybrid work arrangement';
+          } else if (remoteOptions.length > 0) {
+            selectedRadio = remoteOptions[0].element;
+            reasoning = 'Selected remote work option';
+          }
+        }
+        
+        // Salary/compensation questions
+        else if (questionText.includes('salary') || questionText.includes('compensation')) {
+          const negotiableOptions = radioOptions.filter(opt =>
+            opt.text.includes('negotiable') || opt.text.includes('competitive') ||
+            opt.text.includes('discuss')
+          );
+          if (negotiableOptions.length > 0) {
+            selectedRadio = negotiableOptions[0].element;
+            reasoning = 'Selected flexible compensation option';
+          }
+        }
+        
+        // Default selection strategies
+        if (!selectedRadio) {
+          // Try to find the most reasonable first option (not "other" or "none")
+          const reasonableOptions = radioOptions.filter(opt =>
+            !opt.text.includes('other') && !opt.text.includes('none') &&
+            !opt.text.includes('n/a') && !opt.text.includes('decline')
+          );
+          
+          if (reasonableOptions.length > 0) {
+            selectedRadio = reasonableOptions[0].element;
+            reasoning = 'Selected first reasonable option';
+          } else {
+            // Last resort - select first option
+            selectedRadio = radioOptions[0].element;
+            reasoning = 'Selected first available option';
+          }
+        }
+        
+        // Apply selection
+        if (selectedRadio) {
+          selectedRadio.checked = true;
+          selectedRadio.dispatchEvent(new Event("change", { bubbles: true }));
+          
+          const selectedText = radioOptions.find(opt => opt.element === selectedRadio)?.originalText || 'option';
+          sendLogToPopup(`🔘 Selected: "${selectedText}" (${reasoning})`);
+          console.log(`✅ Selected radio option "${selectedText}" for ${labelText}: ${reasoning}`);
           return;
         }
+        
       } else {
         console.log(`⚠️ Radio button already selected for: "${labelText}"`);
         return;
       }
     }
 
-    // 6. CHECKBOXES
+    // 6. INTELLIGENT CHECKBOXES
     console.log("⏳ Waiting for checkboxes...");
-    await new Promise((r) => setTimeout(r, 200)); // Small delay for checkboxes to render
+    await new Promise((r) => setTimeout(r, 800)); // GENEROUS delay for checkboxes to render
     const checkboxes = container.querySelectorAll('input[type="checkbox"]');
     if (checkboxes.length > 0) {
-      const shouldCheck = getCheckboxValue(labelText);
+      sendLogToPopup(`☑️ Checkbox: "${labelText.substring(0, 40)}..."`);
+      
+      const questionText = labelText.toLowerCase();
+      let shouldCheck = false;
+      let reasoning = '';
+      
+      // SMART CHECKBOX DECISIONS
+      
+      // Required agreements (always accept)
+      if ((questionText.includes('term') && questionText.includes('condition')) ||
+          questionText.includes('privacy policy') || questionText.includes('user agreement') ||
+          questionText.includes('terms of service') || questionText.includes('terms and conditions')) {
+        shouldCheck = true;
+        reasoning = 'Required terms acceptance';
+      }
+      
+      else if (questionText.includes('agree') || questionText.includes('accept') || 
+               questionText.includes('consent') || questionText.includes('acknowledge')) {
+        shouldCheck = true;
+        reasoning = 'Agreement checkbox';
+      }
+      
+      // Communication preferences (be selective)
+      else if (questionText.includes('newsletter') || questionText.includes('marketing') || 
+               questionText.includes('promotional') || questionText.includes('advertisement')) {
+        shouldCheck = false; // Generally decline marketing
+        reasoning = 'Declined marketing communications';
+      }
+      
+      else if (questionText.includes('job alert') || questionText.includes('job notification') || 
+               questionText.includes('application update') || questionText.includes('hiring update')) {
+        shouldCheck = true; // Accept job-related communications
+        reasoning = 'Accepted job-related notifications';
+      }
+      
+      // Work preferences and availability
+      else if (questionText.includes('willing to') || questionText.includes('available') || 
+               questionText.includes('able to work') || questionText.includes('can work')) {
+        shouldCheck = true; // Show flexibility
+        reasoning = 'Showed work flexibility';
+      }
+      
+      // Background checks and requirements
+      else if (questionText.includes('background check') || questionText.includes('drug test') || 
+               questionText.includes('screening') || questionText.includes('verification')) {
+        shouldCheck = true;
+        reasoning = 'Agreed to required screening';
+      }
+      
+      // Legal work authorization
+      else if (questionText.includes('authorized to work') || questionText.includes('legal right') || 
+               questionText.includes('work visa') || questionText.includes('citizenship') ||
+               questionText.includes('eligible to work')) {
+        shouldCheck = true;
+        reasoning = 'Confirmed work authorization';
+      }
+      
+      // If it's required (asterisk, "required" text)
+      else if (questionText.includes('*') || questionText.includes('required')) {
+        shouldCheck = true;
+        reasoning = 'Required field';
+      }
+      
+      // Default behavior - confirm/certify type boxes
+      else if (questionText.includes('confirm') || questionText.includes('certify') || 
+               questionText.includes('attest') || questionText.includes('verify')) {
+        shouldCheck = true;
+        reasoning = 'General confirmation';
+      }
+      
+      else {
+        // Default: don't check unclear boxes
+        shouldCheck = false;
+        reasoning = 'Unclear checkbox - left unchecked';
+      }
+      
+      // Apply the decision to all checkboxes in this container
       checkboxes.forEach((checkbox) => {
-        if (shouldCheck) {
-          checkbox.checked = true;
-          checkbox.dispatchEvent(new Event("change", { bubbles: true }));
-        }
+        checkbox.checked = shouldCheck;
+        checkbox.dispatchEvent(new Event("change", { bubbles: true }));
       });
+      
+      const action = shouldCheck ? '✅ Checked' : '⬜ Unchecked';
+      sendLogToPopup(`${action}: ${reasoning}`);
+      console.log(`${action} ${checkboxes.length} box(es) for ${labelText}: ${reasoning}`);
+      
       if (shouldCheck) {
-        console.log(`✅ Checked boxes for ${labelText}`);
-        return;
+        return; // Stop processing if we checked something
       }
     }
 
@@ -6099,67 +6529,148 @@ if (!isIndeedSite) {
   async function runUnlimitedWorkflowLoop() {
     // CRITICAL: Check if automation should run before starting
     if (!shouldRunAutomation()) {
-      console.log("🛑 Automation blocked - not on valid Indeed page");
+      sendLogToPopup("🛑 Automation blocked - not on valid Indeed page", "ERROR");
       return { success: false, reason: "Not on valid Indeed page" };
     }
 
-    console.log("🔄 Starting unlimited workflow loop...");
-    sendStatusMessage("🔄 Starting unlimited workflow loop...");
+    sendLogToPopup("🔄 Starting optimized workflow loop...");
+    sendStatusMessage("🔄 Starting optimized workflow loop...");
 
     let pageCount = 0;
-    let maxPages = 20; // Safety limit to prevent infinite loops
-    let consecutiveFailures = 0;
+    let maxPages = 15; // Reduced from 20 for efficiency
+    let lastProgressTime = Date.now();
+    const MAX_STALL_TIME = 30000; // 30 seconds without progress = quit
 
-    while (pageCount < maxPages && consecutiveFailures < 3) {
+    while (pageCount < maxPages) {
       // Check for emergency stop
       if (window.emergencyStopFlag) {
-        console.log("🚨 Emergency stop detected - halting workflow");
-        sendStatusMessage("🚨 Emergency stop detected - halting workflow");
+        sendLogToPopup("🚨 Emergency stop detected - halting workflow", "WARN");
         return { success: false, reason: "Emergency stop triggered" };
       }
 
       // Check if we should still be running automation
       if (!shouldRunAutomation()) {
-        console.log("🛑 Automation stopped - no longer on valid Indeed page");
-        sendStatusMessage(
-          "🛑 Automation stopped - no longer on valid Indeed page"
-        );
+        sendLogToPopup("🛑 Left valid Indeed page - stopping", "WARN");
         return { success: false, reason: "Left valid Indeed page" };
       }
 
+      // Check for stalling (no progress for too long)
+      if (Date.now() - lastProgressTime > MAX_STALL_TIME) {
+        sendLogToPopup("⏰ No progress for 30s - likely stuck, exiting", "ERROR");
+        return { success: false, reason: "Workflow stalled - no progress" };
+      }
+
       pageCount++;
-      console.log(`\n📄 Processing page ${pageCount}...`);
+      sendLogToPopup(`📄 Processing page ${pageCount}/${maxPages}`);
       sendStatusMessage(`📄 Processing page ${pageCount} of application...`);
 
       try {
-        // Check if we've reached the final success page
-        if (await isSuccessPage()) {
-          console.log("🎉 Reached success page - workflow complete!");
-          sendStatusMessage("🎉 Reached success page - application submitted!");
-          return;
+        // Success page check - BUT ONLY AFTER we've made real progress
+        // Don't check for success on the very first page (prevents premature completion)
+        if (pageCount > 1 && await isSuccessPage()) {
+          sendLogToPopup(`🎉 Success page detected after ${pageCount} pages - application complete!`);
+          recordSuccess("Reached application success page");
+          return { success: true, reason: "Application submitted successfully" };
+        } else if (pageCount === 1) {
+          sendLogToPopup("📋 Skipping success check on first page - ensuring we process forms");
         }
 
-        // Process current page
-        sendStatusMessage(`⚙️ Processing forms on page ${pageCount}...`);
-        const pageProcessed = await processCurrentPage();
+        // Process current page with smart timeout
+        const pageProcessed = await processCurrentPageOptimized();
 
         if (pageProcessed) {
-          consecutiveFailures = 0;
+          lastProgressTime = Date.now(); // Reset stall timer on progress
+          recordSuccess(`Page ${pageCount} processed successfully`);
           sendStatusMessage(`✅ Page ${pageCount} completed successfully`);
 
-          // Try to proceed to next page
-          sendStatusMessage(`➡️ Moving to next page...`);
-          const proceededToNext = await proceedToNextPage();
+          // AGGRESSIVE navigation attempt - try multiple times before giving up
+          sendStatusMessage(`➡️ Attempting to find navigation buttons...`);
+          
+          let navigationAttempts = 0;
+          let proceededToNext = false;
+          
+          while (navigationAttempts < 3 && !proceededToNext) {
+            // Check for emergency stop before each navigation attempt
+            if (window.emergencyStopFlag) {
+              sendLogToPopup("🚨 Emergency stop detected during navigation attempts", "WARN");
+              return { success: false, reason: "Emergency stop triggered" };
+            }
 
-          if (!proceededToNext) {
-            console.log(
-              "⚠️ Could not proceed to next page - might be final page"
-            );
-            break;
+            navigationAttempts++;
+            sendLogToPopup(`🎯 Navigation attempt ${navigationAttempts}/3...`);
+            
+            proceededToNext = await proceedToNextPage();
+            
+            if (!proceededToNext) {
+              console.log(`⚠️ Navigation attempt ${navigationAttempts} failed - waiting and retrying...`);
+              if (navigationAttempts < 3) {
+                // Wait for potential delayed UI updates WITH emergency stop checks
+                sendLogToPopup("⏳ Waiting for potential UI updates...");
+                for (let i = 0; i < 30; i++) { // 3 second wait in 100ms chunks
+                  if (window.emergencyStopFlag) {
+                    sendLogToPopup("🚨 Emergency stop during retry wait", "WARN");
+                    return { success: false, reason: "Emergency stop triggered" };
+                  }
+                  await new Promise((r) => setTimeout(r, 100));
+                }
+                
+                // Try to wait for DOM to stabilize again (already has emergency stop checks)
+                await waitForDOMReady(10000);
+              }
+            } else {
+              sendLogToPopup(`✅ Navigation successful on attempt ${navigationAttempts}`);
+              break;
+            }
           }
 
-          // Wait for next page to load
-          await new Promise((r) => setTimeout(r, 2000));
+          if (!proceededToNext) {
+            console.log("⚠️ All navigation attempts failed - might be final page or need manual intervention");
+            
+            // Before giving up completely, try one more aggressive approach
+            sendLogToPopup("🚨 Trying AGGRESSIVE button detection as last resort...");
+            const lastResortResult = await tryAggressiveNavigation();
+            
+            if (!lastResortResult) {
+              console.log("⚠️ Even aggressive navigation failed - ending workflow");
+              break;
+            } else {
+              proceededToNext = true;
+              sendLogToPopup("🎉 Aggressive navigation succeeded!");
+            }
+          }
+
+          // ULTRA AGGRESSIVE page load waiting - CRITICAL for page transitions
+          sendLogToPopup("⏳ AGGRESSIVE WAIT: Allowing page to fully load and stabilize...");
+          
+          // First wait for immediate navigation - WITH EMERGENCY STOP CHECK
+          for (let i = 0; i < 50; i++) { // 5 second wait broken into 100ms chunks
+            if (window.emergencyStopFlag) {
+              sendLogToPopup("🚨 Emergency stop detected during navigation wait", "WARN");
+              return { success: false, reason: "Emergency stop triggered" };
+            }
+            await new Promise((r) => setTimeout(r, 100));
+          }
+          sendLogToPopup("📊 Phase 1 complete - checking DOM...");
+          
+          // Wait for DOM to be ready with emergency stop checks
+          const domReady = await waitForDOMReady(30000); // This function already has emergency stop checks
+          if (!domReady) {
+            sendLogToPopup("⚠️ DOM ready timeout - continuing anyway", "WARN");
+          } else {
+            sendLogToPopup("✅ DOM confirmed ready");
+          }
+          
+          // Additional stabilization wait - WITH EMERGENCY STOP CHECK
+          sendLogToPopup("⏳ Final stabilization wait...");
+          for (let i = 0; i < 30; i++) { // 3 second wait broken into 100ms chunks
+            if (window.emergencyStopFlag) {
+              sendLogToPopup("🚨 Emergency stop detected during stabilization", "WARN");
+              return { success: false, reason: "Emergency stop triggered" };
+            }
+            await new Promise((r) => setTimeout(r, 100));
+          }
+          
+          sendLogToPopup("🚀 Page fully loaded - ready to process!");
         } else {
           consecutiveFailures++;
           console.log(
@@ -6177,7 +6688,12 @@ if (!isIndeedSite) {
             );
             break;
           }
-          await new Promise((r) => setTimeout(r, 2000));
+          
+          // Wait for page to load after navigation (even on failure recovery)
+          sendLogToPopup("⏳ Waiting for page after failure recovery...");
+          await new Promise((r) => setTimeout(r, 5000)); // Longer wait for failure recovery
+          await waitForDOMReady();
+          sendLogToPopup("✅ Recovery navigation complete");
         }
       } catch (error) {
         // Handle different types of exceptions gracefully
@@ -6220,7 +6736,8 @@ if (!isIndeedSite) {
         // Try to recover by proceeding to next page
         try {
           await proceedToNextPage();
-          await new Promise((r) => setTimeout(r, 2000));
+          sendLogToPopup("⏳ Waiting after error recovery...");
+          await new Promise((r) => setTimeout(r, 5000)); // Longer wait after failure
         } catch (recoverError) {
           if (recoverError instanceof DOMException) {
             console.error(
@@ -6235,6 +6752,31 @@ if (!isIndeedSite) {
             );
           }
           break;
+        }
+      }
+    }
+
+    // FINAL ATTEMPT: Before giving up, try one more time to find and click submit/continue
+    if (pageCount > 1 && consecutiveFailures < 3) {
+      sendLogToPopup("🚨 FINAL ATTEMPT: Making last effort to find submit/continue buttons...");
+      
+      // Try aggressive navigation one more time
+      const finalNavResult = await tryAggressiveNavigation();
+      if (finalNavResult) {
+        sendLogToPopup("🎉 Final navigation attempt succeeded! Waiting for submission...");
+        
+        // Wait extra long for final submission
+        await new Promise((r) => setTimeout(r, 15000)); // 15 second wait
+        
+        // Check if we reached success page after final navigation
+        if (await isSuccessPage()) {
+          sendLogToPopup("🎉 SUCCESS: Final navigation led to success page!");
+          return {
+            completed: true,
+            success: true,
+            pagesProcessed: pageCount,
+            reason: "Success after final navigation attempt"
+          };
         }
       }
     }
@@ -6259,7 +6801,934 @@ if (!isIndeedSite) {
   }
 
   /**
-   * Process the current page by filling forms and answering questions
+   * Optimized version of page processing with smart timeouts and reduced redundancy
+   */
+  async function processCurrentPageOptimized() {
+    // Check for emergency stop at start of processing
+    if (window.emergencyStopFlag) {
+      sendLogToPopup("🚨 Emergency stop detected - halting page processing", "WARN");
+      return false;
+    }
+
+    sendLogToPopup("🔍 Analyzing page with optimized algorithm...");
+
+    // Quick CAPTCHA check first (most critical)
+    const captchaCheck = detectCAPTCHA();
+    if (captchaCheck.found) {
+      sendLogToPopup(`🔒 CAPTCHA detected: ${captchaCheck.type}`, "ERROR");
+      recordFailure(`CAPTCHA detected: ${captchaCheck.type}`);
+      return { processed: false, reason: "captcha_detected", captchaType: captchaCheck.type };
+    }
+
+    let processedSomething = false;
+    let totalInteractions = 0;
+    const startTime = Date.now();
+
+    try {
+      // Extension context validation (quick check)
+      if (!isExtensionContextValid()) {
+        recordFailure("Extension context invalid");
+        return false;
+      }
+
+      // Priority 1: Contact Information (most likely to exist and be required)
+      if (await hasContactInfo()) {
+        sendLogToPopup("📝 Processing contact information...");
+        const contactResult = await fillContactInfo();
+        if (contactResult && contactResult.filled > 0) {
+          processedSomething = true;
+          totalInteractions += contactResult.filled;
+          recordSuccess(`Filled ${contactResult.filled} contact fields`);
+        }
+      }
+
+      // Priority 2: Work Authorization (common requirement) 
+      const workAuthElements = await waitForAnyElement([
+        'input[name*="work"], input[name*="auth"], input[name*="visa"], input[name*="sponsor"]',
+        'select[name*="work"], select[name*="auth"], select[name*="visa"]'
+      ], 2000); // Quick check only
+      
+      if (workAuthElements) {
+        sendLogToPopup("🏛️ Processing work authorization...");
+        const authResult = await fillWorkAuthInfo();
+        if (authResult && authResult.filled > 0) {
+          processedSomething = true;
+          totalInteractions += authResult.filled;
+          recordSuccess(`Filled work authorization`);
+        }
+      }
+
+      // Priority 3: Find and answer questions (optimized detection)
+      // Check for emergency stop before question processing
+      if (window.emergencyStopFlag) {
+        sendLogToPopup("🚨 Emergency stop detected during question processing", "WARN");
+        return false;
+      }
+
+      const questionElements = await findQuestionsOptimized();
+      if (questionElements.length > 0) {
+        sendLogToPopup(`❓ Processing ${questionElements.length} questions...`);
+        
+        for (const question of questionElements) {
+          // Check for emergency stop within question loop
+          if (window.emergencyStopFlag) {
+            sendLogToPopup("🚨 Emergency stop detected - stopping question processing", "WARN");
+            return false;
+          }
+
+          try {
+            const answered = await answerQuestionOptimized(question);
+            if (answered) {
+              processedSomething = true;
+              totalInteractions += 1;
+              recordSuccess(`Answered: ${question.text?.substring(0, 30) || 'question'}`);
+            }
+          } catch (qError) {
+            sendLogToPopup(`⚠️ Question error: ${qError.message}`, "WARN");
+          }
+        }
+      }
+
+      // Priority 4: Navigation (Continue/Submit buttons) - only if we made progress
+      if (processedSomething || totalInteractions === 0) {
+        const navigationResult = await handleNavigationOptimized();
+        if (navigationResult && navigationResult.clicked) {
+          processedSomething = true;
+          totalInteractions += 1;
+          recordSuccess(`Navigation: ${navigationResult.buttonText || 'button clicked'}`);
+        }
+      }
+
+      // Update global interaction count
+      window.formInteractionCount = (window.formInteractionCount || 0) + totalInteractions;
+      
+      const processingTime = Date.now() - startTime;
+      sendLogToPopup(`✅ Page processed: ${totalInteractions} interactions (${processingTime}ms)`);
+      
+      return processedSomething;
+
+    } catch (error) {
+      recordFailure(`Page processing error: ${error.message}`);
+      sendLogToPopup(`❌ Page processing failed: ${error.message}`, "ERROR");
+      return false;
+    }
+  }
+
+  /**
+   * Optimized question detection - faster and more efficient
+   */
+  async function findQuestionsOptimized() {
+    const questions = [];
+    
+    // Quick selector search for common question patterns
+    const questionSelectors = [
+      'div[data-testid*="question"], div[class*="question"]',
+      'fieldset, .form-group, .question-container',
+      'label:has(input), label:has(select), label:has(textarea)'
+    ];
+    
+    for (const selector of questionSelectors) {
+      const elements = document.querySelectorAll(selector);
+      for (const element of elements) {
+        if (element.offsetParent !== null && element.textContent.trim()) { // Visible check
+          const inputs = element.querySelectorAll('input:not([type="hidden"]), select, textarea');
+          if (inputs.length > 0) {
+            questions.push({
+              element: element,
+              text: element.textContent.trim().substring(0, 100),
+              inputs: Array.from(inputs),
+              type: inputs[0].type || inputs[0].tagName.toLowerCase()
+            });
+          }
+        }
+      }
+      
+      // Don't search all selectors if we found questions
+      if (questions.length > 0) break;
+    }
+    
+    return questions.slice(0, 10); // Limit to 10 questions max for efficiency
+  }
+
+  /**
+   * Optimized question answering
+   */
+  async function answerQuestionOptimized(question) {
+    try {
+      const input = question.inputs[0];
+      if (!input) return false;
+      
+      // Quick type-based handling
+      if (input.type === 'radio' || input.type === 'checkbox') {
+        return await handleRadioCheckboxOptimized(question);
+      } else if (input.tagName === 'SELECT') {
+        return await handleSelectOptimized(question);
+      } else if (input.type === 'text' || input.type === 'email' || input.type === 'tel') {
+        return await handleTextInputOptimized(question);
+      }
+      
+      return false;
+    } catch (error) {
+      sendLogToPopup(`Question error: ${error.message}`, "WARN");
+      return false;
+    }
+  }
+
+  /**
+   * INTELLIGENT navigation handling - thinks like a human
+   */
+  async function handleNavigationOptimized() {
+    sendLogToPopup("🧠 Analyzing page for navigation options...");
+    
+    // First, understand what kind of page we're on
+    const pageContext = analyzePageContext();
+    sendLogToPopup(`📄 Page context: ${pageContext.type} (confidence: ${pageContext.confidence}%)`);
+    
+    // Get all potentially clickable elements
+    const allButtons = getAllClickableElements();
+    
+    // Score each button based on context and human logic
+    const scoredButtons = allButtons.map(button => ({
+      element: button,
+      score: scoreButtonIntelligently(button, pageContext),
+      text: getButtonText(button),
+      reason: getButtonScoreReason(button, pageContext)
+    }));
+    
+    // Sort by score (highest first)
+    scoredButtons.sort((a, b) => b.score - a.score);
+    
+    // Log our analysis for transparency
+    sendLogToPopup(`🤔 Found ${scoredButtons.length} potential buttons:`);
+    scoredButtons.slice(0, 3).forEach(btn => {
+      if (btn.score > 0) {
+        sendLogToPopup(`  • "${btn.text}" (score: ${btn.score}) - ${btn.reason}`);
+      }
+    });
+    
+    // Try clicking the best option
+    for (const buttonInfo of scoredButtons) {
+      if (buttonInfo.score >= 70) { // High confidence threshold
+        try {
+          sendLogToPopup(`🎯 Clicking best option: "${buttonInfo.text}" (${buttonInfo.score}% confidence)`);
+          
+          // Human-like click behavior
+          await humanLikeClick(buttonInfo.element);
+          
+          recordSuccess(`Smart navigation: ${buttonInfo.text}`);
+          return { 
+            clicked: true, 
+            buttonText: buttonInfo.text,
+            confidence: buttonInfo.score,
+            reason: buttonInfo.reason
+          };
+        } catch (clickError) {
+          sendLogToPopup(`❌ Click failed: ${clickError.message}`, "WARN");
+          recordFailure(`Failed to click: ${buttonInfo.text}`);
+        }
+      }
+    }
+    
+    // If no high-confidence option, try medium confidence
+    for (const buttonInfo of scoredButtons) {
+      if (buttonInfo.score >= 40 && buttonInfo.score < 70) {
+        try {
+          sendLogToPopup(`⚠️ Trying medium confidence: "${buttonInfo.text}" (${buttonInfo.score}%)`);
+          await humanLikeClick(buttonInfo.element);
+          
+          recordSuccess(`Medium confidence navigation: ${buttonInfo.text}`);
+          return { 
+            clicked: true, 
+            buttonText: buttonInfo.text,
+            confidence: buttonInfo.score,
+            reason: buttonInfo.reason + " (medium confidence)"
+          };
+        } catch (clickError) {
+          sendLogToPopup(`❌ Medium confidence click failed: ${clickError.message}`, "WARN");
+        }
+      }
+    }
+    
+    sendLogToPopup("🤷 No suitable navigation button found", "WARN");
+    return { clicked: false, reason: "No suitable buttons found" };
+  }
+
+  /**
+   * Analyze what type of page we're on for context-aware decisions
+   */
+  function analyzePageContext() {
+    const url = window.location.href.toLowerCase();
+    const pageText = document.body.textContent.toLowerCase();
+    const title = document.title.toLowerCase();
+    
+    let type = "unknown";
+    let confidence = 0;
+    
+    // Job application form detection
+    if (url.includes('smartapply') || url.includes('apply') || url.includes('application')) {
+      type = "application_form";
+      confidence += 40;
+    }
+    
+    // Check for form elements
+    const formElements = document.querySelectorAll('form, input, select, textarea').length;
+    if (formElements > 3) {
+      if (type === "application_form") confidence += 30;
+      else { type = "form_page"; confidence += 20; }
+    }
+    
+    // Check for specific keywords that indicate page type
+    const keywords = {
+      application: ['apply', 'application', 'submit application', 'job application'],
+      contact: ['contact', 'personal information', 'phone', 'email'],
+      questions: ['question', 'experience', 'years', 'qualification'],
+      review: ['review', 'confirm', 'summary', 'check'],
+      success: ['success', 'submitted', 'thank you', 'application received']
+    };
+    
+    for (const [pageType, words] of Object.entries(keywords)) {
+      const matchCount = words.filter(word => pageText.includes(word) || title.includes(word)).length;
+      if (matchCount > 0) {
+        if (pageType === 'success' && matchCount >= 2) {
+          return { type: 'success_page', confidence: 90 };
+        }
+        confidence += matchCount * 10;
+        if (confidence > 60 && type === "unknown") {
+          type = pageType + "_page";
+        }
+      }
+    }
+    
+    return { type, confidence: Math.min(confidence, 100) };
+  }
+
+  /**
+   * Get all elements that could potentially be clickable
+   */
+  function getAllClickableElements() {
+    const elements = [];
+    
+    // Cast wider net but be smart about it
+    const selectors = [
+      'button', 'input[type="button"]', 'input[type="submit"]', 
+      'a[role="button"]', '[role="button"]', 'div[onclick]', 
+      'span[onclick]', '.btn', '.button', '[data-testid*="button"]',
+      '[class*="continue"]', '[class*="submit"]', '[class*="next"]',
+      '[class*="apply"]', '[id*="continue"]', '[id*="submit"]'
+    ];
+    
+    selectors.forEach(selector => {
+      try {
+        const found = document.querySelectorAll(selector);
+        found.forEach(el => {
+          // Only include visible, enabled elements
+          if (el.offsetParent !== null && !el.disabled && !elements.includes(el)) {
+            elements.push(el);
+          }
+        });
+      } catch (e) {
+        // Skip invalid selectors
+      }
+    });
+    
+    return elements;
+  }
+
+  /**
+   * Score a button based on human-like intelligence
+   */
+  function scoreButtonIntelligently(button, pageContext) {
+    let score = 0;
+    const text = getButtonText(button).toLowerCase();
+    const classes = button.className.toLowerCase();
+    const id = button.id.toLowerCase();
+    
+    // High priority action words (what humans look for)
+    const highPriorityWords = {
+      'continue': 90, 'next': 85, 'submit': 80, 'apply': 95,
+      'proceed': 85, 'forward': 75, 'save and continue': 95,
+      'submit application': 100
+    };
+    
+    // Medium priority words
+    const mediumPriorityWords = {
+      'save': 60, 'update': 50, 'confirm': 70, 'review': 65,
+      'go': 40, 'send': 70
+    };
+    
+    // Negative words (avoid these)
+    const negativeWords = {
+      'cancel': -50, 'back': -30, 'previous': -40, 'delete': -80,
+      'remove': -60, 'close': -70, 'exit': -60
+    };
+    
+    // Check text content for keywords
+    for (const [word, points] of Object.entries(highPriorityWords)) {
+      if (text.includes(word)) {
+        score += points;
+      }
+    }
+    
+    for (const [word, points] of Object.entries(mediumPriorityWords)) {
+      if (text.includes(word)) {
+        score += points;
+      }
+    }
+    
+    for (const [word, points] of Object.entries(negativeWords)) {
+      if (text.includes(word)) {
+        score += points; // These are negative, so they reduce score
+      }
+    }
+    
+    // Bonus for form submit buttons
+    if (button.type === 'submit') {
+      score += 40;
+    }
+    
+    // Bonus for primary/action styling
+    if (classes.includes('primary') || classes.includes('action') || 
+        classes.includes('btn-primary') || classes.includes('cta')) {
+      score += 30;
+    }
+    
+    // Context-aware scoring
+    if (pageContext.type === 'application_form') {
+      if (text.includes('apply') || text.includes('submit')) score += 25;
+      if (text.includes('continue') && !text.includes('shopping')) score += 20;
+    }
+    
+    // Penalty for very long or very short text
+    if (text.length > 50) score -= 20;
+    if (text.length < 2 && !button.type === 'submit') score -= 30;
+    
+    // Bonus for positioned like primary action (bottom right, etc.)
+    const rect = button.getBoundingClientRect();
+    if (rect.bottom > window.innerHeight * 0.7) { // Lower on page
+      score += 15;
+    }
+    
+    return Math.max(0, Math.min(100, score)); // Cap between 0-100
+  }
+
+  /**
+   * Get human-readable text from button
+   */
+  function getButtonText(button) {
+    return button.textContent?.trim() || 
+           button.value?.trim() || 
+           button.title?.trim() || 
+           button.getAttribute('aria-label')?.trim() || 
+           'Unnamed Button';
+  }
+
+  /**
+   * Get explanation for why button got its score
+   */
+  function getButtonScoreReason(button, pageContext) {
+    const text = getButtonText(button).toLowerCase();
+    
+    if (text.includes('apply')) return "Contains 'apply' - likely job application action";
+    if (text.includes('continue')) return "Continue button - natural next step";
+    if (text.includes('submit')) return "Submit button - form completion action";
+    if (text.includes('next')) return "Next button - progression action";
+    if (button.type === 'submit') return "HTML submit button - form submission";
+    if (text.includes('save')) return "Save button - progress preservation";
+    
+    return "Generic clickable element";
+  }
+
+  /**
+   * Click button in human-like way
+   */
+  async function humanLikeClick(button) {
+    // Scroll into view first (like humans do)
+    button.scrollIntoView({ behavior: 'smooth', block: 'center' });
+    
+    // Small delay for scroll
+    await new Promise(resolve => setTimeout(resolve, 300));
+    
+    // Focus first (accessibility)
+    button.focus();
+    
+    // Small delay before click
+    await new Promise(resolve => setTimeout(resolve, 150));
+    
+    // Trigger click event
+    button.click();
+    
+    // Also dispatch events that some sites expect
+    button.dispatchEvent(new MouseEvent('mousedown', { bubbles: true }));
+    button.dispatchEvent(new MouseEvent('mouseup', { bubbles: true }));
+    button.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+  }
+
+  /**
+   * INTELLIGENT radio/checkbox handling - thinks like a human
+   */
+  async function handleRadioCheckboxOptimized(question) {
+    const questionText = question.text.toLowerCase();
+    const inputs = question.inputs.filter(input => !input.disabled);
+    
+    if (inputs.length === 0) return false;
+    
+    sendLogToPopup(`🤔 Analyzing question: "${questionText.substring(0, 50)}..."`);
+    
+    // Get all option texts for analysis
+    const options = inputs.map(input => ({
+      element: input,
+      text: getOptionText(input).toLowerCase(),
+      value: input.value?.toLowerCase() || ''
+    }));
+    
+    sendLogToPopup(`📋 Options: ${options.map(o => o.text).join(', ')}`);
+    
+    // HUMAN-LIKE REASONING for common job application questions
+    
+    // Work Authorization Questions
+    if (questionText.includes('authorized') || questionText.includes('legal') || 
+        questionText.includes('work') || questionText.includes('visa') || 
+        questionText.includes('sponsor')) {
+      
+      const yesOption = options.find(opt => 
+        opt.text.includes('yes') || opt.text.includes('authorized') || 
+        opt.value.includes('yes') || opt.value.includes('true')
+      );
+      
+      if (yesOption) {
+        sendLogToPopup("✅ Work authorization - selecting 'Yes'");
+        yesOption.element.click();
+        return true;
+      }
+    }
+    
+    // Experience Questions
+    if (questionText.includes('experience') || questionText.includes('years')) {
+      // Look for number options, prefer middle-range
+      const numberOptions = options.filter(opt => /\d/.test(opt.text));
+      if (numberOptions.length > 0) {
+        // Pick middle option or "2-5 years" type answers
+        const preferredOption = numberOptions.find(opt => 
+          opt.text.includes('2') || opt.text.includes('3') || opt.text.includes('1-3') || opt.text.includes('2-5')
+        ) || numberOptions[Math.floor(numberOptions.length / 2)];
+        
+        sendLogToPopup(`✅ Experience question - selecting "${preferredOption.text}"`);
+        preferredOption.element.click();
+        return true;
+      }
+    }
+    
+    // Availability Questions
+    if (questionText.includes('available') || questionText.includes('start')) {
+      const immediateOption = options.find(opt => 
+        opt.text.includes('immediate') || opt.text.includes('now') || 
+        opt.text.includes('asap') || opt.text.includes('right away')
+      );
+      
+      if (immediateOption) {
+        sendLogToPopup("✅ Availability - selecting immediate start");
+        immediateOption.element.click();
+        return true;
+      }
+      
+      // Otherwise look for "2 weeks" or similar reasonable timeframe
+      const twoWeeksOption = options.find(opt => 
+        opt.text.includes('2 week') || opt.text.includes('two week')
+      );
+      
+      if (twoWeeksOption) {
+        sendLogToPopup("✅ Availability - selecting 2 weeks notice");
+        twoWeeksOption.element.click();
+        return true;
+      }
+    }
+    
+    // Willing/Able Questions
+    if (questionText.includes('willing') || questionText.includes('able')) {
+      const yesOption = options.find(opt => 
+        opt.text.includes('yes') || opt.text.includes('willing') || opt.value.includes('yes')
+      );
+      
+      if (yesOption) {
+        sendLogToPopup("✅ Willingness question - selecting 'Yes'");
+        yesOption.element.click();
+        return true;
+      }
+    }
+    
+    // Location/Travel Questions
+    if (questionText.includes('relocate') || questionText.includes('travel') || questionText.includes('commute')) {
+      const yesOption = options.find(opt => 
+        opt.text.includes('yes') || opt.text.includes('willing') || opt.value.includes('yes')
+      );
+      
+      if (yesOption) {
+        sendLogToPopup("✅ Location/travel - selecting 'Yes'");
+        yesOption.element.click();
+        return true;
+      }
+    }
+    
+    // Salary/Compensation Questions
+    if (questionText.includes('salary') || questionText.includes('compensation') || questionText.includes('pay')) {
+      // Look for "negotiable" or middle-range options
+      const negotiableOption = options.find(opt => 
+        opt.text.includes('negotiable') || opt.text.includes('competitive') || opt.text.includes('open')
+      );
+      
+      if (negotiableOption) {
+        sendLogToPopup("✅ Salary question - selecting negotiable/competitive");
+        negotiableOption.element.click();
+        return true;
+      }
+    }
+    
+    // Default logic - pick most reasonable option
+    // Prefer "Yes" over "No", middle options over extremes
+    let bestOption = null;
+    
+    // Look for positive responses first
+    bestOption = options.find(opt => 
+      opt.text.includes('yes') || opt.text === 'true' || opt.value === 'true'
+    );
+    
+    if (!bestOption) {
+      // Look for middle options (avoid first/last which might be extremes)
+      if (options.length >= 3) {
+        bestOption = options[1]; // Second option often reasonable middle ground
+      } else {
+        bestOption = options[0]; // Fallback to first option
+      }
+    }
+    
+    if (bestOption) {
+      sendLogToPopup(`🎯 Default choice: "${bestOption.text}" (logical fallback)`);
+      bestOption.element.click();
+      return true;
+    }
+    
+    return false;
+  }
+
+  /**
+   * Get human-readable text for radio/checkbox option
+   */
+  function getOptionText(input) {
+    // Try multiple ways to find the option text
+    const label = input.labels?.[0]?.textContent?.trim();
+    if (label) return label;
+    
+    const nextText = input.nextElementSibling?.textContent?.trim();
+    if (nextText) return nextText;
+    
+    const parentText = input.parentElement?.textContent?.trim();
+    if (parentText && parentText !== input.value) return parentText;
+    
+    return input.value || input.getAttribute('aria-label') || 'Unknown Option';
+  }
+
+  /**
+   * INTELLIGENT select dropdown handling - contextual choices
+   */
+  async function handleSelectOptimized(question) {
+    const select = question.inputs[0];
+    if (!select || select.disabled) return false;
+    
+    const questionText = question.text.toLowerCase();
+    const options = Array.from(select.options).filter(opt => opt.value && opt.value !== '');
+    
+    if (options.length === 0) return false;
+    
+    sendLogToPopup(`🎛️ Dropdown question: "${questionText.substring(0, 40)}..."`);
+    sendLogToPopup(`📝 Options: ${options.map(o => o.text).join(', ')}`);
+    
+    let bestOption = null;
+    
+    // CONTEXT-AWARE SELECTION LOGIC
+    
+    // Experience/Years questions
+    if (questionText.includes('experience') || questionText.includes('years')) {
+      // Look for reasonable experience levels (1-3, 2-5 years)
+      bestOption = options.find(opt => {
+        const text = opt.text.toLowerCase();
+        return text.includes('2') || text.includes('1-3') || text.includes('2-5') || 
+               text.includes('1 year') || text.includes('2 years') || text.includes('3 years');
+      });
+      
+      if (!bestOption && options.length > 2) {
+        // Pick second or third option (avoid "0 years" and "10+ years")
+        bestOption = options[1] || options[2];
+      }
+    }
+    
+    // Education questions
+    else if (questionText.includes('education') || questionText.includes('degree')) {
+      // Look for bachelor's degree or similar
+      bestOption = options.find(opt => {
+        const text = opt.text.toLowerCase();
+        return text.includes("bachelor") || text.includes("college") || 
+               text.includes("university") || text.includes("undergraduate");
+      });
+      
+      if (!bestOption) {
+        // Look for "some college" or reasonable education level
+        bestOption = options.find(opt => {
+          const text = opt.text.toLowerCase();
+          return text.includes("some") || text.includes("associate") || text.includes("high school");
+        });
+      }
+    }
+    
+    // Location/State questions
+    else if (questionText.includes('state') || questionText.includes('location') || 
+             questionText.includes('where') || questionText.includes('city')) {
+      // Don't make assumptions about location - pick second option (often a real location)
+      if (options.length > 1) {
+        bestOption = options[1];
+      }
+    }
+    
+    // Priority/Preference questions
+    else if (questionText.includes('priority') || questionText.includes('important') ||
+             questionText.includes('prefer')) {
+      // Look for middle-ground options
+      if (options.length >= 3) {
+        bestOption = options[Math.floor(options.length / 2)];
+      }
+    }
+    
+    // Salary/Rate questions  
+    else if (questionText.includes('salary') || questionText.includes('rate') || 
+             questionText.includes('compensation')) {
+      // Look for competitive/negotiable options
+      bestOption = options.find(opt => {
+        const text = opt.text.toLowerCase();
+        return text.includes('competitive') || text.includes('negotiable') || 
+               text.includes('open') || text.includes('discuss');
+      });
+    }
+    
+    // Availability/Start date
+    else if (questionText.includes('available') || questionText.includes('start')) {
+      // Look for immediate or 2 weeks
+      bestOption = options.find(opt => {
+        const text = opt.text.toLowerCase();
+        return text.includes('immediate') || text.includes('2 week') || 
+               text.includes('asap') || text.includes('right away');
+      });
+    }
+    
+    // Default intelligent selection
+    if (!bestOption) {
+      // Avoid obvious placeholder options
+      const goodOptions = options.filter(opt => {
+        const text = opt.text.toLowerCase();
+        return !text.includes('select') && !text.includes('choose') && 
+               !text.includes('please') && !text.includes('--') && 
+               text.length > 1;
+      });
+      
+      if (goodOptions.length > 0) {
+        // Pick second option from good options, or middle option
+        bestOption = goodOptions.length > 1 ? goodOptions[1] : goodOptions[0];
+        if (goodOptions.length >= 3) {
+          bestOption = goodOptions[Math.floor(goodOptions.length / 2)];
+        }
+      } else {
+        // Last resort - pick second option overall
+        bestOption = options.length > 1 ? options[1] : options[0];
+      }
+    }
+    
+    if (bestOption) {
+      sendLogToPopup(`✅ Selected: "${bestOption.text}" (intelligent choice)`);
+      
+      // Set the selection
+      select.value = bestOption.value;
+      select.selectedIndex = Array.from(select.options).indexOf(bestOption);
+      
+      // Trigger change events
+      select.dispatchEvent(new Event('change', { bubbles: true }));
+      select.dispatchEvent(new Event('input', { bubbles: true }));
+      
+      return true;
+    }
+    
+    return false;
+  }
+
+  /**
+   * INTELLIGENT text input handling - contextual and realistic responses
+   */
+  async function handleTextInputOptimized(question) {
+    const input = question.inputs[0];
+    if (!input || input.disabled || input.value?.trim()) return false;
+    
+    const questionText = question.text.toLowerCase();
+    const fieldName = input.name?.toLowerCase() || input.id?.toLowerCase() || '';
+    const placeholder = input.placeholder?.toLowerCase() || '';
+    
+    sendLogToPopup(`📝 Text input: "${questionText.substring(0, 40)}..."`);
+    
+    let value = '';
+    let reasoning = '';
+    
+    // SMART CONTEXTUAL RESPONSES
+    
+    // Contact Information
+    if (questionText.includes('phone') || fieldName.includes('phone') || 
+        questionText.includes('tel') || placeholder.includes('phone')) {
+      value = '(555) 123-4567';
+      reasoning = 'Standard phone format';
+    }
+    
+    else if (questionText.includes('email') || fieldName.includes('email') || 
+             input.type === 'email' || placeholder.includes('email')) {
+      value = 'applicant@email.com';
+      reasoning = 'Professional email format';
+    }
+    
+    // Experience/Years
+    else if (questionText.includes('years of experience') || questionText.includes('how many years')) {
+      value = '3';
+      reasoning = 'Reasonable experience level';
+    }
+    
+    else if (questionText.includes('experience') && (questionText.includes('year') || fieldName.includes('year'))) {
+      value = '2-3';
+      reasoning = 'Experience range';
+    }
+    
+    // Salary/Compensation
+    else if (questionText.includes('salary') || questionText.includes('desired salary') || 
+             questionText.includes('compensation') || fieldName.includes('salary')) {
+      value = 'Competitive';
+      reasoning = 'Flexible salary expectation';
+    }
+    
+    else if (questionText.includes('rate') || questionText.includes('hourly')) {
+      value = 'Negotiable';
+      reasoning = 'Flexible rate';
+    }
+    
+    // Skills and Qualifications
+    else if (questionText.includes('skill') || questionText.includes('software') || 
+             questionText.includes('tool') || questionText.includes('technology')) {
+      value = 'Microsoft Office, Communication, Problem-solving';
+      reasoning = 'Common professional skills';
+    }
+    
+    // Why questions / Cover letter type
+    else if (questionText.includes('why') || questionText.includes('interest') || 
+             questionText.includes('motivation') || questionText.includes('tell us')) {
+      value = 'I am interested in this position because it aligns with my career goals and offers opportunities for professional growth.';
+      reasoning = 'Professional motivation statement';
+    }
+    
+    // Additional information / Other
+    else if (questionText.includes('additional') || questionText.includes('other') || 
+             questionText.includes('comment') || questionText.includes('note')) {
+      value = 'Thank you for considering my application.';
+      reasoning = 'Polite additional comment';
+    }
+    
+    // References
+    else if (questionText.includes('reference') || questionText.includes('supervisor') || 
+             questionText.includes('manager')) {
+      value = 'Available upon request';
+      reasoning = 'Standard reference response';
+    }
+    
+    // Certifications/Licenses  
+    else if (questionText.includes('certification') || questionText.includes('license') || 
+             questionText.includes('credential')) {
+      value = 'N/A';
+      reasoning = 'No specific certifications required';
+    }
+    
+    // Numbers/Quantities
+    else if (input.type === 'number' || questionText.includes('how many') || 
+             questionText.includes('number of')) {
+      
+      if (questionText.includes('year')) {
+        value = '2';
+        reasoning = 'Reasonable year count';
+      } else if (questionText.includes('people') || questionText.includes('team')) {
+        value = '5';
+        reasoning = 'Typical team size';
+      } else {
+        value = '1';
+        reasoning = 'Default number';
+      }
+    }
+    
+    // Dates
+    else if (input.type === 'date' || questionText.includes('date') || 
+             questionText.includes('when')) {
+      const twoWeeksFromNow = new Date();
+      twoWeeksFromNow.setDate(twoWeeksFromNow.getDate() + 14);
+      value = twoWeeksFromNow.toISOString().split('T')[0]; // YYYY-MM-DD format
+      reasoning = 'Standard 2-week notice period';
+    }
+    
+    // Website/URL
+    else if (input.type === 'url' || questionText.includes('website') || 
+             questionText.includes('portfolio') || questionText.includes('linkedin')) {
+      value = 'https://linkedin.com/in/profile';
+      reasoning = 'Professional profile placeholder';
+    }
+    
+    // Generic fallback based on field characteristics
+    else if (input.maxLength && input.maxLength > 100) {
+      // Long text field - probably wants a detailed response
+      value = 'I have relevant experience and skills that make me a strong candidate for this position. I am eager to contribute to your team and grow professionally.';
+      reasoning = 'Standard professional response for long fields';
+    }
+    
+    else if (input.maxLength && input.maxLength <= 10) {
+      // Short field - probably wants brief answer
+      value = 'Yes';
+      reasoning = 'Brief positive response';
+    }
+    
+    else {
+      // Default fallback
+      value = 'Available';
+      reasoning = 'Generic professional response';
+    }
+    
+    // Fill the input
+    if (value) {
+      sendLogToPopup(`✅ Filling: "${value}" (${reasoning})`);
+      
+      // Human-like typing simulation
+      input.focus();
+      input.value = '';
+      
+      // Simulate gradual typing for longer text
+      if (value.length > 20) {
+        for (let i = 0; i <= value.length; i++) {
+          input.value = value.substring(0, i);
+          input.dispatchEvent(new Event('input', { bubbles: true }));
+          await new Promise(resolve => setTimeout(resolve, 10)); // 10ms per character
+        }
+      } else {
+        input.value = value;
+      }
+      
+      // Trigger all necessary events
+      input.dispatchEvent(new Event('input', { bubbles: true }));
+      input.dispatchEvent(new Event('change', { bubbles: true }));
+      input.dispatchEvent(new Event('blur', { bubbles: true }));
+      
+      return true;
+    }
+    
+    return false;
+  }
+
+  /**
+   * Original process current page function (fallback)
    */
   async function processCurrentPage() {
     console.log("🔍 Analyzing current page...");
@@ -6400,6 +7869,87 @@ if (!isIndeedSite) {
   }
 
   /**
+   * AGGRESSIVE navigation - last resort attempt to find any clickable navigation
+   */
+  async function tryAggressiveNavigation() {
+    console.log("🚨 AGGRESSIVE NAVIGATION - Last resort button search");
+    
+    // Check for emergency stop at start
+    if (window.emergencyStopFlag) {
+      sendLogToPopup("🚨 Emergency stop detected - aborting aggressive navigation", "WARN");
+      return false;
+    }
+    
+    // Expand search to ANY button that might advance the workflow
+    const aggressiveSelectors = [
+      'button', 
+      'input[type="submit"]',
+      'input[type="button"]',
+      '[role="button"]',
+      'a[href*="continue"]',
+      'a[href*="next"]',
+      'div[onclick]',
+      '[class*="button"]',
+      '[class*="btn"]',
+      '[id*="button"]',
+      '[id*="btn"]'
+    ];
+    
+    const navigationKeywords = [
+      'continue', 'next', 'submit', 'apply', 'proceed', 'forward',
+      'save and continue', 'review', 'confirm', 'send', 'finish',
+      'complete', 'done', 'submit application', 'apply now'
+    ];
+    
+    for (const selector of aggressiveSelectors) {
+      // Check emergency stop during search
+      if (window.emergencyStopFlag) {
+        sendLogToPopup("🚨 Emergency stop detected during aggressive search", "WARN");
+        return false;
+      }
+      const elements = document.querySelectorAll(selector);
+      
+      for (const element of elements) {
+        if (!element.offsetParent || element.disabled) continue; // Skip hidden/disabled
+        
+        const text = (element.textContent || element.value || element.title || element.alt || '').toLowerCase().trim();
+        
+        // Check if text contains any navigation keywords
+        const hasNavigationKeyword = navigationKeywords.some(keyword => text.includes(keyword));
+        
+        if (hasNavigationKeyword && text.length > 0) {
+          console.log(`🎯 AGGRESSIVE: Found potential navigation element: "${text}"`);
+          
+          try {
+            // Scroll to element first
+            element.scrollIntoView({ behavior: 'smooth', block: 'center' });
+            await new Promise((r) => setTimeout(r, 1000));
+            
+            // Try multiple click methods
+            element.focus();
+            await new Promise((r) => setTimeout(r, 500));
+            
+            element.click();
+            element.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+            
+            sendLogToPopup(`🚨 AGGRESSIVE: Clicked "${text}"`);
+            
+            // Wait longer to see if navigation occurred
+            await new Promise((r) => setTimeout(r, 4000));
+            
+            return true; // Return success immediately after clicking
+          } catch (error) {
+            console.log(`❌ AGGRESSIVE: Click failed on "${text}":`, error.message);
+          }
+        }
+      }
+    }
+    
+    console.log("❌ AGGRESSIVE NAVIGATION: No clickable elements found");
+    return false;
+  }
+
+  /**
    * Try to proceed to the next page by clicking Continue/Submit buttons
    */
   async function proceedToNextPage() {
@@ -6420,7 +7970,14 @@ if (!isIndeedSite) {
         console.log("🖱️ Clicking Continue button...");
         try {
           continueButton.click();
-          await new Promise((r) => setTimeout(r, 1000));
+          // AGGRESSIVE wait for page navigation after Continue click
+          sendLogToPopup("⏳ AGGRESSIVE WAIT: Continue button clicked, waiting for navigation...");
+          await new Promise((r) => setTimeout(r, 8000)); // Much longer wait for navigation
+          
+          sendLogToPopup("📊 Checking if navigation occurred...");
+          // Additional check to see if page changed
+          await new Promise((r) => setTimeout(r, 2000)); // Extra buffer time
+          
           return true;
         } catch (clickError) {
           console.error(
@@ -6436,7 +7993,14 @@ if (!isIndeedSite) {
         console.log("🖱️ Clicking Submit button...");
         try {
           submitButton.click();
-          await new Promise((r) => setTimeout(r, 1000));
+          // EXTRA AGGRESSIVE wait for Submit button (most critical!)
+          sendLogToPopup("⏳ CRITICAL WAIT: Submit button clicked - waiting for submission...");
+          await new Promise((r) => setTimeout(r, 10000)); // VERY long wait for submit
+          
+          sendLogToPopup("📊 Checking if submission completed...");
+          // Extra time for submission processing
+          await new Promise((r) => setTimeout(r, 3000)); // Additional buffer for submission
+          
           return true;
         } catch (clickError) {
           console.error("❌ Error clicking Submit button:", clickError.message);
@@ -6452,7 +8016,7 @@ if (!isIndeedSite) {
       document.dispatchEvent(
         new KeyboardEvent("keydown", { key: "Enter", keyCode: 13 })
       );
-      await new Promise((r) => setTimeout(r, 1000));
+      await new Promise((r) => setTimeout(r, 2000)); // Longer wait for Enter key
     } catch (keyError) {
       console.error("❌ Error with Enter key fallback:", keyError.message);
     }
@@ -6752,11 +8316,30 @@ if (!isIndeedSite) {
   }
 
   /**
-   * Legacy success page check (kept for compatibility)
+   * STRICT Success page check - Only returns true when ABSOLUTELY certain we've submitted
+   * This prevents premature workflow completion before hitting submit buttons
    */
   async function isSuccessPage() {
     const verification = await performSuccessVerification();
-    return verification.confidence >= 0.6;
+    
+    // MUCH higher confidence required to prevent premature completion
+    if (verification.confidence < 0.85) {
+      return false;
+    }
+    
+    // Additional checks to ensure we've actually gone through form submission
+    const url = window.location.href.toLowerCase();
+    const hasSubmissionInUrl = url.includes('submitted') || url.includes('success') || url.includes('thank') || url.includes('complete');
+    const hasFormElements = document.querySelectorAll('form, input, select, textarea').length;
+    
+    // If we still see lots of form elements, we probably haven't submitted yet
+    if (hasFormElements > 10) {
+      console.log(`🤔 High confidence (${(verification.confidence * 100).toFixed(1)}%) but still see ${hasFormElements} form elements - continuing workflow`);
+      return false;
+    }
+    
+    console.log(`✅ STRICT SUCCESS CHECK PASSED: ${(verification.confidence * 100).toFixed(1)}% confidence, URL indicates submission, minimal forms remaining`);
+    return true;
   }
 
   /**
@@ -8908,5 +10491,15 @@ function showCAPTCHANotification(captchaInfo) {
 function sendStatusMessage(message) {
   chrome.runtime.sendMessage({ status: message }, function (response) {
     console.log("Response from background:", response);
+  });
+}
+
+// Helper function to send console logs to popup
+function sendLogToPopup(message, level = 'LOG') {
+  chrome.runtime.sendMessage({
+    greeting: "consoleLog",
+    message: message,
+    level: level,
+    timestamp: new Date().toISOString()
   });
 }

@@ -7,8 +7,8 @@ let currentJob = null;
 let processing = false;
 let activeJobTabId = null; // Track the current job tab
 
-const JOB_TIMEOUT = 90000; // 90 seconds per job (reduced from 500 seconds)
-const JOB_THROTTLE = 8000; // 8 seconds between jobs (increased to avoid CAPTCHAs)
+const JOB_TIMEOUT = 200000; // 200 seconds (3.3 minutes) per job - GENEROUS TIME FOR COMPLEX FORMS  
+const JOB_THROTTLE = 12000; // 12 seconds between jobs (increased for more human-like pacing)
 const MAX_RETRIES = 5; // Maximum retry attempts per job
 const MAX_CONCURRENT_TABS = 1; // Only allow 1 job tab at a time
 const MAX_TOTAL_TABS = 10; // Emergency brake - never have more than 10 tabs total
@@ -115,6 +115,23 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     sendResponse({ status: 'stopped' });
     return true;
   }
+  
+  if (message.action === 'clearLogs') {
+    console.log('🧹 Clearing background logs and storage');
+    
+    // Clear any console logs or message history stored in background
+    // Remove stored console logs from storage if they exist
+    chrome.storage.local.remove(['consoleLogs', 'messageHistory', 'logHistory'], () => {
+      if (chrome.runtime.lastError) {
+        console.error("Error clearing logs:", chrome.runtime.lastError);
+      } else {
+        console.log("✅ Background logs cleared successfully");
+      }
+    });
+    
+    sendResponse({ status: 'logs_cleared' });
+    return true;
+  }
 });
 // TODO add this to an html  when done
 function saveQueueState() {
@@ -158,6 +175,12 @@ function logQueueStatus() {
 function sendCompletionMessageToMainTab(successCount, failedCount, totalCount, successRate) {
   if (!mainIndeedTabId) {
     console.log("⚠️ Cannot send completion message - main Indeed tab not found");
+    return;
+  }
+  
+  // Don't show completion popup if no jobs were actually processed
+  if (totalCount === 0) {
+    console.log("ℹ️ No jobs to complete - skipping completion notification");
     return;
   }
   
@@ -398,20 +421,31 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   if (message.status) {
     console.log("📢 Status update:", message.status);
     
-    // Forward status to all tabs (including index.js if it's listening)
+    // Forward status to all tabs AND to popup if it exists
+    const statusMessage = {
+      greeting: "statusUpdate",
+      status: message.status,
+      timestamp: new Date().toISOString()
+    };
+    
+    // Send to tabs (for content scripts)
     chrome.tabs.query({}, (tabs) => {
       tabs.forEach(tab => {
-        chrome.tabs.sendMessage(tab.id, {
-          greeting: "statusUpdate",
-          status: message.status,
-          timestamp: new Date().toISOString()
-        }, () => {
+        chrome.tabs.sendMessage(tab.id, statusMessage, () => {
           // Ignore errors - not all tabs will have listeners
           if (chrome.runtime.lastError) {
             // Silently handle the error
           }
         });
       });
+    });
+    
+    // Also try to send to popup (if it's open)
+    chrome.runtime.sendMessage(statusMessage, () => {
+      if (chrome.runtime.lastError) {
+        // Popup might not be open, that's fine
+        console.log("ℹ️ Popup not open to receive status update");
+      }
     });
     
     sendResponse({ status: "received" });
@@ -507,6 +541,9 @@ function addToRetryQueue(job, reason) {
 //  add retry logic for failed jobs 
 async function processNextJob() {
   console.log(`🔄 processNextJob() called - Queue: ${jobQueue.length}, Processing: ${processing}, ActiveTab: ${activeJobTabId}`);
+  
+  // Send log to popup for testing
+  sendLogToPopup(`Processing job queue - ${jobQueue.length} jobs remaining`);
   
   // CRASH PREVENTION: Check tab count before processing
   await preventCrash();
@@ -916,5 +953,34 @@ function createJobTab() {
     };
     
     chrome.tabs.onRemoved.addListener(tabRemovedListener);
+  });
+}
+
+// Helper function to send console logs to popup
+function sendLogToPopup(message, level = 'LOG') {
+  const logMessage = {
+    greeting: "consoleLog",
+    message: message,
+    level: level,
+    timestamp: new Date().toISOString()
+  };
+  
+  // Send to all tabs (for content scripts)
+  chrome.tabs.query({}, (tabs) => {
+    tabs.forEach(tab => {
+      chrome.tabs.sendMessage(tab.id, logMessage, () => {
+        if (chrome.runtime.lastError) {
+          // Silently handle the error
+        }
+      });
+    });
+  });
+  
+  // Also send to popup (if it's open)
+  chrome.runtime.sendMessage(logMessage, () => {
+    if (chrome.runtime.lastError) {
+      // Popup might not be open, that's fine
+      console.log("ℹ️ Popup not open to receive console log");
+    }
   });
 }

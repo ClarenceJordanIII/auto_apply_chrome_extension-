@@ -155,8 +155,10 @@ body {
 
 /* Timeline icon color variants */
 .timeline-icon.gray  { background: var(--color-timeline-pending); } /* Pending/Initial */
-.timeline-icon.blue  { background: var(--color-timeline-progress); } /* In Progress */
+.timeline-icon.blue  { background: var(--color-timeline-progress); } /* In Progress/Console Logs */
 .timeline-icon.green { background: var(--color-timeline-complete); } /* Completed */
+.timeline-icon.red   { background: var(--color-error); } /* Error Logs */
+.timeline-icon.yellow { background: var(--color-warning); } /* Warning Logs */
 
 /* SVG icons inside timeline circles */
 .timeline-icon svg {
