@@ -43,11 +43,6 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
       feed.appendChild(statusMessage);
     }
 
-
-
-
-
-    
     // You can display this status in your UI here
     // For example, update a status element:
     const statusElement = document.getElementById('status');

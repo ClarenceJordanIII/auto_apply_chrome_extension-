@@ -25,7 +25,15 @@
 
   "permissions": ["storage", "scripting", "activeTab", "tabs"],
 
-  "host_permissions": ["http://*/*", "https://*/*"],
+  "host_permissions": [
+    "*://*.indeed.com/*",
+    "*://*.indeed.ca/*",
+    "*://*.indeed.co.uk/*",
+    "*://*.indeed.co.in/*",
+    "*://*.indeed.com.au/*",
+    "*://*.indeed.de/*",
+    "*://*.indeed.fr/*"
+  ],
 
   "background": {
     "service_worker": "background.js"
@@ -33,7 +41,15 @@
 
   "content_scripts": [
     {
-      "matches": ["<all_urls>"],
+      "matches": [
+        "*://*.indeed.com/*",
+        "*://*.indeed.ca/*",
+        "*://*.indeed.co.uk/*",
+        "*://*.indeed.co.in/*",
+        "*://*.indeed.com.au/*",
+        "*://*.indeed.de/*",
+        "*://*.indeed.fr/*"
+      ],
       "js": ["content.js"],
       "run_at": "document_idle"
     }
@@ -42,7 +58,15 @@
   "web_accessible_resources": [
     {
       "resources": ["questions_config.json"],
-      "matches": ["<all_urls>"]
+      "matches": [
+        "*://*.indeed.com/*",
+        "*://*.indeed.ca/*",
+        "*://*.indeed.co.uk/*",
+        "*://*.indeed.co.in/*",
+        "*://*.indeed.com.au/*",
+        "*://*.indeed.de/*",
+        "*://*.indeed.fr/*"
+      ]
     }
   ]
 }

@@ -72,6 +72,18 @@ body {
     color: var(--color-gray-500);
 }
 
+.header p a {
+    color: #ff813f;
+    text-decoration: none;
+    font-weight: 500;
+    transition: color 0.2s ease;
+}
+
+.header p a:hover {
+    color: #e06b2e;
+    text-decoration: underline;
+}
+
 /* ==================== STATUS SECTION ==================== */
 /* Live status display with indicator dots */
 .status-section {

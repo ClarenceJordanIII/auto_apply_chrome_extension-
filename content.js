@@ -22,7 +22,7 @@ if (typeof currentDomain === "undefined") {
 }
 if (typeof isIndeedSite === "undefined") {
   var isIndeedSite = ALLOWED_DOMAINS.some((domain) =>
-    currentDomain.includes(domain)
+    currentDomain === domain || currentDomain.endsWith('.' + domain)
   );
 }
 
