@@ -95,7 +95,9 @@ function emergencyStopAllAutomation() {
   
   // Close any active job tabs
   if (activeJobTabId) {
-    chrome.tabs.remove(activeJobTabId).catch(() => {});
+    try {
+      chrome.tabs.remove(activeJobTabId, () => { /* ignore errors */ });
+    } catch (_) { /* ignore */ }
     activeJobTabId = null;
   }
   
@@ -718,7 +720,10 @@ function createJobTab() {
     let tabClosed = false;
     let jobCompleted = false;
 
-    // Increased timeout for complex applications
+  // Track tab removed listener reference across closures for proper cleanup
+  let tabRemovedListenerRef = null;
+
+  // Increased timeout for complex applications
     let timeoutId = setTimeout(async () => {
       if (!jobCompleted) {
         console.log(`⏰ Job timed out after ${JOB_TIMEOUT/1000} seconds:`, currentJob.jobTitle);
@@ -795,6 +800,10 @@ function createJobTab() {
         tabClosed = true;
         
         chrome.runtime.onMessage.removeListener(jobResultListener);
+        if (tabRemovedListenerRef) {
+          try { chrome.tabs.onRemoved.removeListener(tabRemovedListenerRef); } catch (_) {}
+          tabRemovedListenerRef = null;
+        }
         
         console.log(`⏭️ Job completed. Waiting ${JOB_THROTTLE}ms before processing next job...`);
         console.log(`📊 Current status: ${jobQueue.length} jobs remaining, processing flag reset to false`);
@@ -970,6 +979,7 @@ function createJobTab() {
       }
     };
     
+    tabRemovedListenerRef = tabRemovedListener;
     chrome.tabs.onRemoved.addListener(tabRemovedListener);
   });
 }

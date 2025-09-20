@@ -47,89 +47,11 @@ if (typeof SMART_TIMEOUTS === "undefined") {
   };
   
   console.log("⏱️ GENEROUS TIMEOUTS ACTIVE - Algorithm has plenty of time to work! 🚀");
+}
 
 // ═══════════════════════════════════════════════════════════════════════════
 // 🎯 ROBUST SELECTOR UTILITY FUNCTIONS - Enhanced Element Detection
 // ═══════════════════════════════════════════════════════════════════════════
-
-// ═══════════════════════════════════════════════════════════════════════════
-// 🧹 CENTRALIZED CLEANUP REGISTRY & SAFE HELPERS
-// Tracks listeners, timers, observers for proper teardown
-// ═══════════════════════════════════════════════════════════════════════════
-if (!window._extCleanup) {
-  window._extCleanup = {
-    listeners: [], // { target, type, handler, options }
-    timeouts: new Set(),
-    intervals: new Set(),
-    observers: new Set(),
-    cleanups: [] // functions
-  };
-}
-
-function safeAddEventListener(target, type, handler, options) {
-  try {
-    target.addEventListener(type, handler, options);
-    window._extCleanup.listeners.push({ target, type, handler, options });
-  } catch (e) {
-    console.debug('safeAddEventListener failed:', e.message);
-  }
-}
-
-function safeRemoveAllEventListeners() {
-  const regs = window._extCleanup.listeners || [];
-  for (const { target, type, handler, options } of regs) {
-    try { target.removeEventListener(type, handler, options); } catch {}
-  }
-  window._extCleanup.listeners = [];
-}
-
-function safeSetTimeout(fn, delay) {
-  const id = setTimeout(fn, delay);
-  window._extCleanup.timeouts.add(id);
-  return id;
-}
-
-function safeClearAllTimeouts() {
-  for (const id of window._extCleanup.timeouts) {
-    try { clearTimeout(id); } catch {}
-  }
-  window._extCleanup.timeouts.clear();
-}
-
-function safeSetInterval(fn, delay) {
-  const id = setInterval(fn, delay);
-  window._extCleanup.intervals.add(id);
-  return id;
-}
-
-function safeClearAllIntervals() {
-  for (const id of window._extCleanup.intervals) {
-    try { clearInterval(id); } catch {}
-  }
-  window._extCleanup.intervals.clear();
-}
-
-function registerObserver(observer) {
-  if (observer) window._extCleanup.observers.add(observer);
-}
-
-function disconnectAllObservers() {
-  for (const obs of window._extCleanup.observers) {
-    try { obs.disconnect(); } catch {}
-  }
-  window._extCleanup.observers.clear();
-}
-
-function registerCleanup(fn) {
-  if (typeof fn === 'function') window._extCleanup.cleanups.push(fn);
-}
-
-function runAllCleanups() {
-  const fns = window._extCleanup.cleanups.splice(0);
-  for (const fn of fns) {
-    try { fn(); } catch {}
-  }
-}
 
 /**
  * Enhanced element selection with multiple fallback strategies
@@ -673,7 +595,7 @@ console.log("🚀 Content script loaded on Indeed - preventing cache...");
   function setupEventListeners() {
     try {
       // Prevent page from being cached by browser
-      safeAddEventListener(window, "pageshow", function (event) {
+      window.addEventListener("pageshow", function (event) {
         if (event.persisted) {
           console.log(
             "⚠️ Page loaded from cache, reloading to ensure fresh state..."
@@ -683,7 +605,7 @@ console.log("🚀 Content script loaded on Indeed - preventing cache...");
       });
       
       // Tab/window close cleanup
-  safeAddEventListener(window, "beforeunload", function(event) {
+      window.addEventListener("beforeunload", function(event) {
         console.log("🧹 Tab closing - cleaning up extension resources...");
         
         // Stop all automation
@@ -716,7 +638,7 @@ console.log("🚀 Content script loaded on Indeed - preventing cache...");
       });
       
       // Page visibility change handling
-  safeAddEventListener(document, "visibilitychange", function() {
+      document.addEventListener("visibilitychange", function() {
         if (document.hidden) {
           console.log("📱 Tab became hidden - reducing activity");
           // Reduce activity when tab is hidden
@@ -726,7 +648,7 @@ console.log("🚀 Content script loaded on Indeed - preventing cache...");
       });
       
       // Add unhandled error listener with React error filtering
-  safeAddEventListener(window, 'error', function(event) {
+      window.addEventListener('error', function(event) {
         const message = event.message || '';
         
         // Filter out React minified errors that we can't control
@@ -743,7 +665,7 @@ console.log("🚀 Content script loaded on Indeed - preventing cache...");
       });
       
       // React error boundary simulation for our extension
-  safeAddEventListener(window, 'unhandledrejection', function(event) {
+      window.addEventListener('unhandledrejection', function(event) {
         const reason = event.reason?.message || event.reason;
         
         // Filter React-related promise rejections
@@ -1007,14 +929,23 @@ console.log("🚀 Content script loaded on Indeed - preventing cache...");
     // Stop any running automation
     processing = false;
     
-    // Clear resources centrally
-    cleanupExtensionResources('emergency-stop');
+    // Clear any stored timeouts/intervals
+    if (window.currentJobTimeout) {
+      clearTimeout(window.currentJobTimeout);
+      window.currentJobTimeout = null;
+      console.log("🧹 Cleared job timeout");
+    }
+    
+    if (window.currentJobPromise) {
+      window.currentJobPromise = null;
+      console.log("🧹 Cleared job promise");
+    }
     
     // Clear any other automation flags
     window.automationRunning = false;
     
     // Notify popup that automation has been stopped
-    try { if (isExtensionContextValid()) {
+    try {
       chrome.runtime.sendMessage({
         greeting: "statusUpdate",
         status: "🛑 Emergency stop activated - All automation halted",
@@ -1022,7 +953,7 @@ console.log("🚀 Content script loaded on Indeed - preventing cache...");
         isComplete: true,
         isStopped: true
       });
-    }} catch (error) {
+    } catch (error) {
       console.log("Could not notify popup of emergency stop:", error.message);
     }
     
@@ -1059,86 +990,13 @@ console.log("🚀 Content script loaded on Indeed - preventing cache...");
   }
 
   // Keyboard shortcut for emergency stop (Ctrl+Shift+X)
-  const _emergencyKeyHandler = (event) => {
+  document.addEventListener("keydown", (event) => {
     if (event.ctrlKey && event.shiftKey && event.key === "X") {
       event.preventDefault();
       triggerEmergencyStop();
     }
-  };
-  safeAddEventListener(document, "keydown", _emergencyKeyHandler);
+  });
 
-  // Centralized cleanup for timers, observers, and DOM elements
-  function cleanupExtensionResources(reason = 'manual') {
-    try {
-      // Run registered cleanups first
-      runAllCleanups();
-
-      // Remove all event listeners added via safeAddEventListener
-      safeRemoveAllEventListeners();
-
-      // Clear all tracked timeouts/intervals
-      safeClearAllTimeouts();
-      safeClearAllIntervals();
-
-      // Disconnect tracked observers
-      disconnectAllObservers();
-
-      // Clear heartbeat/keepAlive
-      if (window.keepAliveInterval) {
-        clearInterval(window.keepAliveInterval);
-        window.keepAliveInterval = null;
-      }
-
-      // Clear job timeout/promise trackers
-      if (window.currentJobTimeout) {
-        clearTimeout(window.currentJobTimeout);
-        window.currentJobTimeout = null;
-      }
-      window.currentJobPromise = null;
-
-      // Disconnect learning system observers
-      try {
-        if (window.questionLearningSystem && window.questionLearningSystem.observer) {
-          window.questionLearningSystem.observer.disconnect();
-        }
-      } catch (e) {
-        console.debug('Observer cleanup warning:', e.message);
-      }
-
-      // Remove any extension UI elements
-      try { removeExtensionElements(); } catch (_) {}
-
-      // Log cleanup
-      sendLogToPopup(`🧹 Resources cleaned up (${reason})`, 'INFO');
-
-      // Reset running flags
-      window.automationRunning = false;
-      window.emergencyStopFlag = false;
-    } catch (e) {
-      console.debug('Cleanup encountered an issue:', e.message);
-    }
-  }
-
-  // Provide a start handler invoked from popup
-  function handleStartProcess() {
-    try {
-      window.emergencyStopFlag = false;
-      window.automationRunning = true;
-      sendStatusMessage('🚀 Starting automation...');
-      // Prefer Indeed-aware entry point
-      if (typeof indeedMain === 'function') {
-        indeedMain();
-      } else if (typeof startIndeed === 'function') {
-        startIndeed();
-      }
-    } catch (e) {
-      console.error('Failed to start automation:', e);
-      sendStatusMessage(`❌ Failed to start: ${e.message}`);
-    }
-  }
-
-  if (!window._indeedMessageListenerAdded) {
-  window._indeedMessageListenerAdded = true;
   chrome.runtime.onMessage.addListener((message, sender, sendResponse) => { 
     console.log("📨 Content script received message:", message.action);
     
@@ -1235,12 +1093,17 @@ console.log("🚀 Content script loaded on Indeed - preventing cache...");
     // Handle cleanup action
     if (message.action === "cleanup") {
       console.log("🧹 Cleanup requested - clearing any pending operations...");
-      cleanupExtensionResources('message:cleanup');
+      if (window.currentJobTimeout) {
+        clearTimeout(window.currentJobTimeout);
+        window.currentJobTimeout = null;
+      }
+      if (window.currentJobPromise) {
+        window.currentJobPromise = null;
+      }
       sendResponse({ status: "cleaned" });
       return true;
     }
   });
-  } // end guard for message listener
 
   // Console command for emergency stop (developers can type: stopAutomation() in console)
   window.stopAutomation = triggerEmergencyStop;
@@ -1940,7 +1803,6 @@ console.log("🚀 Content script loaded on Indeed - preventing cache...");
           });
         });
       });
-      registerObserver(this.observer);
 
       // Start observing
       this.observer.observe(document.body, {
@@ -2236,30 +2098,12 @@ console.log("🚀 Content script loaded on Indeed - preventing cache...");
         return { safe: false, reason: 'Input is in search context' };
       }
       
-      // Check for visible search indicators nearby (robust, no :contains)
-      let hasNearbySearch = false;
-      try {
-        const parent = input.parentElement || input.closest('form') || document.body;
-        if (parent) {
-          const candidates = Array.from(parent.querySelectorAll(
-            'button[type="submit"], button, [role="button"], input[type="submit"], [class*="search"], [id*="search"]'
-          ));
-          hasNearbySearch = candidates.some(el => {
-            try {
-              if (!isElementVisible(el)) return false;
-              const text = (
-                (el.textContent || el.value || '') + ' ' +
-                (el.getAttribute('aria-label') || '') + ' ' +
-                (el.getAttribute('title') || '')
-              ).toLowerCase();
-              const idc = ((el.id || '') + ' ' + (el.className || '')).toLowerCase();
-              return text.includes('search') || idc.includes('search');
-            } catch { return false; }
-          });
-        }
-      } catch {}
+      // Check for visible search indicators nearby
+      const nearbySearchElements = input.parentElement?.querySelectorAll(
+        'button[type="submit"]:contains("Search"), [class*="search-btn"], [id*="search"]'
+      );
       
-      if (hasNearbySearch) {
+      if (nearbySearchElements && nearbySearchElements.length > 0) {
         return { safe: false, reason: 'Search elements detected nearby' };
       }
       
@@ -2689,13 +2533,11 @@ console.log("🚀 Content script loaded on Indeed - preventing cache...");
           questionData.cleanupFunctions = [];
         }
 
-        const remover = () => {
+        questionData.cleanupFunctions.push(() => {
           element.removeEventListener("change", changeHandler);
           element.removeEventListener("input", changeHandler);
           element.removeEventListener("click", changeHandler);
-        };
-        questionData.cleanupFunctions.push(remover);
-        registerCleanup(remover);
+        });
       });
     }
 
@@ -4267,12 +4109,9 @@ console.log("🚀 Content script loaded on Indeed - preventing cache...");
       });
   }
 
-  if (!window._indeedMainScheduled) {
-    window._indeedMainScheduled = true;
-    setTimeout(() => {
-      indeedMain();
-    }, 2000);
-  }
+  setTimeout(() => {
+    indeedMain();
+  }, 2000);
 
   // sgets job card data
   // ...existing code...
@@ -4924,7 +4763,7 @@ console.log("🚀 Content script loaded on Indeed - preventing cache...");
       sendResponse({ status: "cleaned" });
       return true;
     }
-  
+  });
 
   // Console command for emergency stop (developers can type: stopAutomation() in console)
   window.stopAutomation = triggerEmergencyStop;
@@ -5015,20 +4854,10 @@ console.log("🚀 Content script loaded on Indeed - preventing cache...");
             networkActivity: !!document.querySelector('meta[http-equiv="refresh"]'),
             newContentLoaded: window.lastContentChange && (Date.now() - window.lastContentChange < 15000),
             activeFormSubmission: !!document.querySelector('form[data-submitting="true"]'),
-            visibleSubmitButtons: (() => {
-              try {
-                // Base clickable elements
-                const base = findElementsRobust([
-                  'button', 'input[type="submit"]', '[role="button"]', 'a[href]'
-                ]);
-                const textMatches = ['submit','continue','next','apply'];
-                return base.some(el => {
-                  if (!isElementVisible(el) || el.disabled) return false;
-                  const txt = (el.textContent || el.value || el.getAttribute('aria-label') || '').toLowerCase();
-                  return textMatches.some(t => txt.includes(t));
-                });
-              } catch (_) { return false; }
-            })(),
+            visibleSubmitButtons: findElementsRobust([
+              'button[type="submit"]', 'input[type="submit"]', 'button:contains("Submit")',
+              'button:contains("Continue")' , 'button:contains("Next")', 'button:contains("Apply")'
+            ]).some(el => isElementVisible(el) && !el.disabled),
             filledFormFields: document.querySelectorAll('input[value]:not([value=""]), select option:checked, textarea:not(:empty)').length,
             processingAfterSubmission: window.lastSubmissionAttempt && (Date.now() - window.lastSubmissionAttempt < 60000)
           };
@@ -5311,7 +5140,7 @@ console.log("🚀 Content script loaded on Indeed - preventing cache...");
   let tabCloseMessageSent = false;
   
   // Listen for tab close (unload) and notify background
-  safeAddEventListener(window, "beforeunload", function () {
+  window.addEventListener("beforeunload", function () {
     if (isExtensionContextValid() && !tabCloseMessageSent) {
       try {
         tabCloseMessageSent = true;
@@ -5918,35 +5747,38 @@ console.log("🚀 Content script loaded on Indeed - preventing cache...");
     
     console.log('✅ Application context validated - proceeding with Continue button search');
     
-    // Gather candidate buttons/inputs and filter by text/attributes (no :contains/:has)
-    const continueCandidateSelectors = [
+    const continueSelectors = [
+      // Exact data-testid match
       '[data-testid="continue-button"]',
-      'button[type="button"]',
-      'button',
-      'input[type="button"]',
-      'input[type="submit"]',
-      'a[role="button"]',
-      '[class*="continue" i]',
-      '[aria-label*="continue" i]',
-      '[title*="continue" i]'
+      
+      // Generic continue button selectors
+      'button[type="button"]:has(span:contains("Continue"))',
+      'button:contains("Continue")',
+      'input[type="button"][value*="Continue" i]',
+      'input[type="submit"][value*="Continue" i]',
+      
+      // Class-based selectors
+      '[class*="continue"]',
+      '[class*="btn"]:contains("Continue")',
+      
+      // Aria and accessibility selectors
+      '[aria-label*="Continue" i]',
+      '[title*="Continue" i]',
+      
+      // Mosaic provider specific (Indeed's component system)
+      '[class*="mosaic-provider"]:has(span:contains("Continue"))',
+      '[class*="mosaic"]:contains("Continue")'
     ];
 
-    for (const selector of continueCandidateSelectors) {
+    for (const selector of continueSelectors) {
       try {
-        const elements = Array.from(document.querySelectorAll(selector));
-        const candidates = elements.filter(el => {
-          try {
-            if (!isElementVisible(el)) return false;
-            const text = ((el.textContent || el.value || '') + ' ' +
-                         (el.getAttribute('aria-label') || '') + ' ' +
-                         (el.getAttribute('title') || '')).toLowerCase();
-            const idc = ((el.id || '') + ' ' + (el.className || '') + ' ' + (el.getAttribute('data-testid') || '')).toLowerCase();
-            return text.includes('continue') || idc.includes('continue');
-          } catch { return false; }
+        // Use robust element finder
+        const button = findElementRobust(selector, document, { 
+          textContent: 'continue',
+          attributes: { 'data-testid': 'continue' }
         });
-
-        const button = candidates.find(Boolean);
-        if (button) {
+        
+        if (button && isElementVisible(button)) {
           // ADDITIONAL SAFETY: Verify this is NOT a search-related continue button
           const buttonContext = button.closest('form, .search, .job-search, #searchform, [class*="search"]');
           
@@ -8213,22 +8045,16 @@ console.log("🚀 Content script loaded on Indeed - preventing cache...");
           return true;
         }
         
-        // Look for final submit/complete buttons (robust, no :contains)
-        const submitCandidateSelectors = [
-          'button', 'input[type="submit"]', 'button[type="submit"]',
-          '[data-testid*="submit" i]', '[data-testid*="complete" i]',
-          'a[role="button"]'
+        // Look for final submit/complete buttons
+        const finalSubmitSelectors = [
+          'button:contains("Submit")', 'button:contains("Submit Application")',
+          'button:contains("Complete")', 'button:contains("Finish")',
+          'button:contains("Send")', 'button:contains("Apply Now")',
+          'input[type="submit"]', 'button[type="submit"]',
+          '[data-testid*="submit"]', '[data-testid*="complete"]'
         ];
-        let submitButton = null;
-        for (const sel of submitCandidateSelectors) {
-          const btn = findElementRobust(sel, document, { textContent: 'submit' })
-                   || findElementRobust(sel, document, { textContent: 'submit application' })
-                   || findElementRobust(sel, document, { textContent: 'complete' })
-                   || findElementRobust(sel, document, { textContent: 'finish' })
-                   || findElementRobust(sel, document, { textContent: 'send' })
-                   || findElementRobust(sel, document, { textContent: 'apply now' });
-          if (btn) { submitButton = btn; break; }
-        }
+        
+        const submitButton = findElementRobust(finalSubmitSelectors);
         
         if (submitButton && isElementVisible(submitButton) && !submitButton.disabled) {
           console.log(`🎯 Found final submit button: "${submitButton.textContent || submitButton.value}"`);
@@ -8260,17 +8086,12 @@ console.log("🚀 Content script loaded on Indeed - preventing cache...");
         }
         
         // Check for navigation buttons that might lead to completion
-        const navCandidateSelectors = [
-          'button', 'a[role="button"]', 'input[type="button"]'
+        const navigationSelectors = [
+          'button:contains("Next")', 'button:contains("Continue")',
+          'button:contains("Proceed")', 'button:contains("Review")'
         ];
-        let navButton = null;
-        for (const sel of navCandidateSelectors) {
-          const btn = findElementRobust(sel, document, { textContent: 'next' })
-                   || findElementRobust(sel, document, { textContent: 'continue' })
-                   || findElementRobust(sel, document, { textContent: 'proceed' })
-                   || findElementRobust(sel, document, { textContent: 'review' });
-          if (btn) { navButton = btn; break; }
-        }
+        
+        const navButton = findElementRobust(navigationSelectors);
         
         if (navButton && isElementVisible(navButton) && !navButton.disabled) {
           console.log(`➡️ Found navigation button: "${navButton.textContent}"`);
@@ -8469,14 +8290,13 @@ console.log("🚀 Content script loaded on Indeed - preventing cache...");
 
     await new Promise((r) => setTimeout(r, 3000));
 
-  const easyApplySelectors = [
+    const easyApplySelectors = [
       "#indeedApplyButton",
       'button[data-testid="indeedApplyButton-test"]',
       'button[aria-label*="Apply now"]',
       "button.css-jiauqs",
       ".ia-IndeedApplyButton button",
-  // Avoid :has; target by class directly as a safe fallback
-  "button .jobsearch-IndeedApplyButton-newDesign",
+      "button:has(.jobsearch-IndeedApplyButton-newDesign)",
       'button[title=""][aria-label*="Apply"]',
     ];
 
@@ -8504,18 +8324,11 @@ console.log("🚀 Content script loaded on Indeed - preventing cache...");
 
     // Validate and click the apply button
     if (applyBtn.tagName !== "BUTTON") {
-      // Prefer an ancestor button if the match is a child within a button
-      const ancestorButton = applyBtn.closest('button');
-      if (ancestorButton) {
-        applyBtn = ancestorButton;
+      const buttonInside = applyBtn.querySelector("button");
+      if (buttonInside) {
+        applyBtn = buttonInside;
       } else {
-        // Fallback: look for a descendant button within the matched element
-        const buttonInside = applyBtn.querySelector("button");
-        if (buttonInside) {
-          applyBtn = buttonInside;
-        } else {
-          throw new Error("Found element is not clickable button");
-        }
+        throw new Error("Found element is not clickable button");
       }
     }
 
@@ -8982,19 +8795,13 @@ console.log("🚀 Content script loaded on Indeed - preventing cache...");
     const questionSelectors = [
       'div[data-testid*="question"], div[class*="question"]',
       'fieldset, .form-group, .question-container',
-      // Fallback to all labels; filtering below will ensure only labels with nested inputs are used
-      'label'
+      'label:has(input), label:has(select), label:has(textarea)'
     ];
     
     for (const selector of questionSelectors) {
       const elements = document.querySelectorAll(selector);
       for (const element of elements) {
         if (element.offsetParent !== null && element.textContent.trim()) { // Visible check
-          // If scanning labels, only consider those that contain form controls
-          if (selector === 'label') {
-            const hasNestedControl = element.querySelector('input, select, textarea');
-            if (!hasNestedControl) continue;
-          }
           const inputs = element.querySelectorAll('input:not([type="hidden"]), select, textarea');
           if (inputs.length > 0) {
             // DYNAMIC: Determine primary type from ALL inputs, not just first one
