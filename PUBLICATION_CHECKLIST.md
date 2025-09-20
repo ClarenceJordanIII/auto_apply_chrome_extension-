@@ -35,7 +35,7 @@
 ### **Required Store Information**
 
 #### **Basic Information**
-- **Extension Name**: Job Auto Apply Extension
+- **Extension Name**: Auto Job Apply
 - **Category**: Productivity
 - **Language**: English
 - **Developer**: Clarence Jordan III

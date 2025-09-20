@@ -1,4 +1,4 @@
-# 🚀 Job Auto Apply Extension - Intelligent Job Application Assistant
+# 🚀 Auto Job Apply - Intelligent Job Application Assistant
 
 **Transform your job search with AI-powered automation that applies to jobs with human-like intelligence.**
 

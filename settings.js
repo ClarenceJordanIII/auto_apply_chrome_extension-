@@ -1,4 +1,4 @@
-// Settings page functionality for Job Application Assistant
+// Settings page functionality for Auto Job Apply
 console.log('Settings page loaded');
 
 // Input type definitions with labels

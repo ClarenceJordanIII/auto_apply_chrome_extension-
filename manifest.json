@@ -1,11 +1,24 @@
 {
   "manifest_version": 3,
-  "name": "Job Auto Apply Extension",
+  "name": "Auto Job Apply",
   "version": "1.0.0",
   "description": "AI-powered job application automation for Indeed with intelligent form filling and real-time tracking",
 
+  "icons": {
+    "16": "logo.png",
+    "32": "logo.png",
+    "48": "logo.png",
+    "128": "logo.png"
+  },
+
   "action": {
-    "default_popup": "index.html"
+    "default_popup": "index.html",
+    "default_icon": {
+      "16": "logo.png",
+      "32": "logo.png",
+      "48": "logo.png",
+      "128": "logo.png"
+    }
   },
 
   "options_page": "settings.html",
