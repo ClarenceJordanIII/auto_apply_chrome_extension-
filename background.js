@@ -1040,7 +1040,16 @@ function createJobTab() {
                     // Wait before sending main job message
                     setTimeout(() => {
                       sendLogToPopup(`📤 Sending main job message to tab ${tabId}`, 'INFO');
-                      chrome.tabs.sendMessage(tabId, { action: "applyJob", job: currentJob }, (response) => {
+                      // Send applyJob message with automation state included
+                      const jobMessage = {
+                        action: "applyJob", 
+                        job: currentJob,
+                        automationEnabled: true, // Explicitly indicate automation should be enabled
+                        timestamp: Date.now(),
+                        source: 'background_job_processor'
+                      };
+                      
+                      chrome.tabs.sendMessage(tabId, jobMessage, (response) => {
                         if (chrome.runtime.lastError) {
                           const errorMsg = chrome.runtime.lastError.message;
                           sendLogToPopup(`❌ Message attempt ${messageAttempts} FAILED: ${errorMsg}`, 'ERROR');

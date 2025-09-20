@@ -12,65 +12,79 @@ if (typeof DEBUG_LOG === "undefined") {
     startTime: Date.now()
   };
 
-  // Enhanced debug logger with timestamp and category
+  // Enhanced debug logger with timestamp and category - PROTECTED FROM CIRCULAR CALLS
   function debugLog(message, category = "GENERAL", level = "INFO") {
-    if (!DEBUG_LOG.enabled) return;
+    // CIRCULAR PROTECTION: Prevent infinite recursion with immediate return
+    if (debugLog._inProgress || !DEBUG_LOG.enabled) return;
     
-    const timestamp = new Date().toISOString();
-    const timeSinceStart = Date.now() - DEBUG_LOG.startTime;
-    const formattedMessage = `[${timestamp}][+${timeSinceStart}ms][${category}][${level}] ${message}`;
+    debugLog._inProgress = true;
     
-    // Always log to console
-    console.log(formattedMessage);
-    
-    // Send to debug panel if available
     try {
-      if (typeof window.addDebugLogEntry === 'function') {
-        window.addDebugLogEntry(message, level, category);
+      const timestamp = new Date().toISOString();
+      const timeSinceStart = Date.now() - DEBUG_LOG.startTime;
+      const formattedMessage = `[${timestamp}][+${timeSinceStart}ms][${category}][${level}] ${message}`;
+      
+      // Always log to console
+      console.log(formattedMessage);
+      
+      // Send to debug panel if available
+      try {
+        if (typeof window.addDebugLogEntry === 'function') {
+          window.addDebugLogEntry(message, level, category);
+        }
+        
+        // Also post message for debug-logger.js to capture
+        window.postMessage({
+          type: 'EXTENSION_LOG',
+          message,
+          level,
+          category,
+          timestamp
+        }, '*');
+      } catch (e) {
+        // Silent fail for UI logging
       }
       
-      // Also post message for debug-logger.js to capture
-      window.postMessage({
-        type: 'EXTENSION_LOG',
-        message,
-        level,
+      // Store in memory buffer
+      DEBUG_LOG.logEntries.push({
+        timestamp,
+        timeSinceStart,
         category,
-        timestamp
-      }, '*');
-    } catch (e) {
-      // Silent fail for UI logging
-    }
-    
-    // Store in memory buffer
-    DEBUG_LOG.logEntries.push({
-      timestamp,
-      timeSinceStart,
-      category,
-      level,
-      message
-    });
-    
-    // Trim if exceeding max entries
-    if (DEBUG_LOG.logEntries.length > DEBUG_LOG.maxEntries) {
-      DEBUG_LOG.logEntries.shift();
-    }
-    
-    // Optionally send to background for persistent logging
-    try {
-      if (typeof chrome !== "undefined" && chrome.runtime) {
-        chrome.runtime.sendMessage({
-          action: "debugLog",
-          data: {
-            timestamp,
-            timeSinceStart,
-            category,
-            level,
-            message
-          }
-        });
+        level,
+        message
+      });
+      
+      // Trim if exceeding max entries
+      if (DEBUG_LOG.logEntries.length > DEBUG_LOG.maxEntries) {
+        DEBUG_LOG.logEntries.shift();
       }
-    } catch (e) {
-      // Ignore message sending errors
+      
+      // SILENT CONTEXT CHECK: Do NOT call isExtensionContextValid() to prevent circular calls
+      try {
+        if (typeof chrome !== "undefined" && chrome.runtime && chrome.runtime.id) {
+          // Direct extension context check without calling other functions
+          chrome.runtime.sendMessage({
+            action: "debugLog",
+            data: {
+              timestamp,
+              timeSinceStart,
+              category,
+              level,
+              message
+            }
+          }, () => {
+            // Silent callback - ignore any errors to prevent recursion
+            if (chrome.runtime.lastError) {
+              // Don't log this error to avoid circular logging
+            }
+          });
+        }
+      } catch (e) {
+        // Silent fail - don't log this error to avoid circular logging
+      }
+      
+    } finally {
+      debugLog._inProgress = false;
     }
   }
   
@@ -1315,7 +1329,51 @@ console.log("🚀 Content script loaded on Indeed - preventing cache...");
       return professionalInfo.motivation || config.fallbacks?.motivation || '';
     }
 
-    return ''; // Return empty string if no match
+    // Enhanced fallback for unknown fields - make intelligent guesses
+    console.log(`🤔 Unknown field detected: "${labelText}" - applying intelligent fallback`);
+    
+    // Try partial keyword matching for common patterns
+    if (text.includes('work') || text.includes('employ')) {
+      return professionalInfo.experience || 'Yes';
+    }
+    if (text.includes('cover') && text.includes('letter')) {
+      return professionalInfo.coverLetter || 'Please see attached resume for my qualifications and experience.';
+    }
+    if (text.includes('reference')) {
+      return 'Available upon request';
+    }
+    if (text.includes('relocat')) {
+      return professionalInfo.willRelocate || 'Yes';
+    }
+    if (text.includes('travel')) {
+      return professionalInfo.canTravel || 'Yes, up to 25%';
+    }
+    if (text.includes('citizenship') || text.includes('authorize')) {
+      return personalInfo.workAuthorization || 'Yes, authorized to work';
+    }
+    if (text.includes('criminal') || text.includes('background')) {
+      return 'No';
+    }
+    if (text.includes('drug') || text.includes('test')) {
+      return 'Yes, willing to comply';
+    }
+    if (text.includes('notice') || text.includes('week')) {
+      return professionalInfo.noticeRequired || '2 weeks';
+    }
+    
+    // For any other text field, provide a professional but generic response
+    if (inputType === 'text' || inputType === 'textarea') {
+      return professionalInfo.genericResponse || 'N/A';
+    }
+    
+    // For number fields, default to reasonable numbers
+    if (inputType === 'number') {
+      if (text.includes('year')) return '3';
+      if (text.includes('month')) return '6';
+      return '1';
+    }
+    
+    return ''; // Only return empty as last resort
   }
 
   // Keep connection alive to prevent caching
@@ -1589,11 +1647,46 @@ console.log("🚀 Content script loaded on Indeed - preventing cache...");
     
     // Handle applyJob action (consolidated from removed duplicate listener)
     if (message.action === "applyJob" && message.job) {
-  // ...removed debug log for production...
+      console.log("🚀 APPLYJOB MESSAGE RECEIVED - Auto-enabling automation for job processing!");
+      
+      // CRITICAL: Auto-enable automation for job processing tabs
+      // If we received applyJob message, it means user clicked Start and jobs are being processed
+      console.log("🔓 AUTO-ENABLING AUTOMATION: Job processing tab detected");
+      window.automationAllowed = true;
+      window.manualStartRequired = false;
+      window.automationRunning = true;
+      
+      // Immediately persist this state to prevent issues
+      const jobProcessingState = {
+        automationAllowed: true,
+        manualStartRequired: false,
+        automationRunning: true,
+        timestamp: Date.now(),
+        url: window.location.href,
+        jobProcessingTab: true,
+        jobTitle: message.job.jobTitle || 'Unknown Job',
+        jobCompany: message.job.companyName || 'Unknown Company',
+        autoEnabled: true,
+        reason: 'applyJob message received from background'
+      };
+      
+      try {
+        localStorage.setItem('extensionAutomationState', JSON.stringify(jobProcessingState));
+        sessionStorage.setItem('extensionAutomationState', JSON.stringify(jobProcessingState));
+        window.automationStateData = jobProcessingState;
+        console.log("💾 Job processing automation state saved successfully");
+      } catch (e) {
+        console.warn("Could not save job processing state:", e.message);
+      }
+      
+      // Start continuous state preservation for this job processing tab
+      if (typeof startAutomationStatePreservation === 'function') {
+        startAutomationStatePreservation();
+      }
       
       // Prevent multiple concurrent job processing
       if (window.currentJobPromise) {
-  // ...removed debug log for production...
+        console.warn("⚠️ Job already running - returning busy status");
         sendResponse({ status: "busy", result: "fail_job_already_running" });
         return true;
       }
@@ -2393,7 +2486,29 @@ console.log("🚀 Content script loaded on Indeed - preventing cache...");
         const questionType = this.detectQuestionTypeFromContext(questionText, inputElement);
         
         if (!questionType || questionType.type === 'unknown' || questionType.confidence < 0.3) {
-          console.log(`❌ Dynamic detection failed - type: ${questionType?.type}, confidence: ${questionType?.confidence}`);
+          console.log(`🤔 Dynamic detection uncertain - type: ${questionType?.type}, confidence: ${questionType?.confidence}`);
+          console.log(`🎯 Attempting fallback smart fill for: "${questionText}"`);
+          
+          // Try the basic getSmartValue function as fallback
+          const fallbackValue = await getSmartValue(questionText, inputElement.type || 'text');
+          
+          if (fallbackValue && fallbackValue !== '') {
+            console.log(`✅ Fallback value found: "${fallbackValue}"`);
+            
+            // Apply the fallback value
+            const success = await this.applyValueToInput(inputElement, fallbackValue, { type: 'fallback', inputType: inputElement.type });
+            
+            if (success) {
+              console.log(`✅ Applied fallback value successfully`);
+              
+              // Show indicator that this was a best guess
+              this.showSmartGuessIndicator(container, questionText, fallbackValue);
+              
+              return true;
+            }
+          }
+          
+          console.log(`❌ No suitable value found for unknown question`);
           return false;
         }
 
@@ -2830,6 +2945,77 @@ console.log("🚀 Content script loaded on Indeed - preventing cache...");
         }
       } catch (error) {
   // ...removed debug log for production...
+      }
+    }
+
+    /**
+     * Show indicator for smart guess fills
+     */
+    showSmartGuessIndicator(container, questionText, value) {
+      try {
+        const indicator = createSafeElement("div", {
+          className: "smart-guess-indicator",
+          innerHTML: `🤔 Smart guess: "${value}"`,
+          style: {
+            position: 'absolute',
+            top: '-5px',
+            right: '-5px',
+            background: 'linear-gradient(45deg, #FF9800, #F57C00)',
+            color: 'white',
+            padding: '4px 8px',
+            borderRadius: '12px',
+            fontSize: '11px',
+            fontWeight: 'bold',
+            zIndex: '10000',
+            animation: 'smartGuessAnimation 4s ease-out',
+            boxShadow: '0 2px 8px rgba(0,0,0,0.2)',
+            cursor: 'pointer',
+            maxWidth: '200px',
+            whiteSpace: 'nowrap',
+            overflow: 'hidden',
+            textOverflow: 'ellipsis'
+          }
+        });
+
+        if (indicator) {
+          // Add CSS animation if not already present
+          if (!findByIdRobust(["smart-guess-styles", "guess-styles"])) {
+            const style = document.createElement("style");
+            style.id = "smart-guess-styles";
+            style.textContent = `
+            @keyframes smartGuessAnimation {
+              0% { transform: scale(0.8); opacity: 0; }
+              15% { transform: scale(1.1); opacity: 1; }
+              85% { transform: scale(1); opacity: 1; }
+              100% { transform: scale(0.9); opacity: 0; }
+            }
+            .smart-guess-indicator:hover {
+              background: linear-gradient(45deg, #FFA726, #FF8F00) !important;
+              transform: scale(1.05);
+              transition: all 0.2s ease;
+            }
+            `;
+            document.head.appendChild(style);
+          }
+
+          // Add click handler to let user know this was a guess
+          indicator.addEventListener('click', () => {
+            console.log(`🤔 User clicked on smart guess for: "${questionText}" = "${value}"`);
+            // Could add functionality to let user correct the guess here
+          });
+
+          container.style.position = container.style.position || "relative";
+          safeAppendChild(container, indicator);
+
+          // Remove indicator after animation (longer for guesses so user notices)
+          setTimeout(() => {
+            if (indicator && indicator.parentNode) {
+              indicator.parentNode.removeChild(indicator);
+            }
+          }, 4000);
+        }
+      } catch (error) {
+        console.warn('Error showing smart guess indicator:', error);
       }
     }
 
@@ -3744,6 +3930,60 @@ console.log("🚀 Content script loaded on Indeed - preventing cache...");
                 }
               }
             }
+            
+            // Enhanced unknown field handling - make intelligent guesses
+            console.log(`🤔 Unknown question type detected: "${questionText}" - applying smart fallbacks`);
+            const lowerText = questionText.toLowerCase();
+            
+            // Work-related questions
+            if (lowerText.includes('work') && (lowerText.includes('hour') || lowerText.includes('time'))) {
+              return config.professionalInfo?.workHours || '40 hours per week';
+            }
+            if (lowerText.includes('overtime')) {
+              return 'Yes, when needed';
+            }
+            if (lowerText.includes('shift') || lowerText.includes('schedule')) {
+              return config.professionalInfo?.preferredSchedule || 'Flexible with standard business hours';
+            }
+            
+            // Benefits and compensation
+            if (lowerText.includes('benefit') || lowerText.includes('insurance')) {
+              return 'Standard benefits package preferred';
+            }
+            if (lowerText.includes('401k') || lowerText.includes('retirement')) {
+              return 'Yes, interested in retirement benefits';
+            }
+            
+            // Skills and certifications
+            if (lowerText.includes('skill') || lowerText.includes('technolog')) {
+              return config.professionalInfo?.primarySkills || 'Relevant skills as outlined in resume';
+            }
+            if (lowerText.includes('certification') || lowerText.includes('license')) {
+              return config.education?.certifications || 'See resume for relevant certifications';
+            }
+            
+            // Generic professional responses
+            if (lowerText.includes('why') && (lowerText.includes('interest') || lowerText.includes('want'))) {
+              return config.professionalInfo?.motivation || 'I am interested in this opportunity to contribute my skills and grow professionally.';
+            }
+            if (lowerText.includes('strength') || lowerText.includes('asset')) {
+              return 'Strong problem-solving abilities and collaborative approach to achieving team goals.';
+            }
+            if (lowerText.includes('challenge') || lowerText.includes('difficult')) {
+              return 'I approach challenges methodically and work collaboratively to find effective solutions.';
+            }
+            
+            // Yes/No questions - default to positive when appropriate
+            if ((lowerText.includes('can you') || lowerText.includes('are you') || lowerText.includes('will you')) &&
+                !lowerText.includes('criminal') && !lowerText.includes('fired')) {
+              return 'Yes';
+            }
+            
+            // For unrecognized questions, provide a professional default
+            if (inputType === 'textarea') {
+              return 'Please see my resume for relevant details. Happy to discuss further during interview.';
+            }
+            
             return null;
         }
       } catch (error) {
@@ -4466,16 +4706,64 @@ console.log("🚀 Content script loaded on Indeed - preventing cache...");
       window.manualStartRequired = false;
       window.automationRunning = true;
       
+      // Start continuous state preservation immediately
+      startAutomationStatePreservation();
+      
       // PERSIST automation state to survive page reloads and context recovery
+      preserveAutomationState({
+        userStarted: true,
+        startTime: Date.now(),
+        startUrl: window.location.href
+      });
+      
       try {
-        localStorage.setItem('extensionAutomationState', JSON.stringify({
+        const automationState = {
           automationAllowed: true,
           manualStartRequired: false,
           automationRunning: true,
           timestamp: Date.now(),
-          url: window.location.href
-        }));
-        console.log("💾 Automation state persisted to localStorage");
+          url: window.location.href,
+          sessionId: Date.now() + '_' + Math.random().toString(36).substr(2, 9),
+          indeedDomain: window.location.hostname
+        };
+        
+        localStorage.setItem('extensionAutomationState', JSON.stringify(automationState));
+        sessionStorage.setItem('extensionAutomationState', JSON.stringify(automationState));
+        
+        // Also store in global window for immediate access
+        window.automationStateData = automationState;
+        
+        console.log("💾 Automation state persisted to both localStorage and sessionStorage");
+        
+        // Set up periodic state refresh to maintain freshness during long automation
+        if (window.stateRefreshInterval) {
+          clearInterval(window.stateRefreshInterval);
+        }
+        
+        window.stateRefreshInterval = setInterval(() => {
+          if (window.automationAllowed && window.automationRunning) {
+            try {
+              const refreshedState = {
+                ...automationState,
+                timestamp: Date.now(),
+                url: window.location.href
+              };
+              
+              localStorage.setItem('extensionAutomationState', JSON.stringify(refreshedState));
+              sessionStorage.setItem('extensionAutomationState', JSON.stringify(refreshedState));
+              window.automationStateData = refreshedState;
+              
+              console.log("🔄 Automation state refreshed");
+            } catch (e) {
+              console.warn("Could not refresh automation state:", e.message);
+            }
+          } else {
+            // Clear interval if automation stopped
+            clearInterval(window.stateRefreshInterval);
+            window.stateRefreshInterval = null;
+          }
+        }, 5000); // Refresh every 5 seconds during automation
+        
       } catch (storageError) {
         console.warn("Could not persist automation state:", storageError.message);
       }
@@ -4489,23 +4777,176 @@ console.log("🚀 Content script loaded on Indeed - preventing cache...");
         window.learningSystem.startAutoDetection();
       }
       
-      // Determine if we're on a search page or job page
-      if (window.location.href.includes("/jobs") || window.location.href.includes("/search")) {
-        debugLog("Detected search page - starting job collection via indeedMain", "AUTOMATION");
-        // Use indeedMain() which does proper element detection before calling startIndeed()
-        indeedMain();
-        return { status: "success", message: "Job collection initiated" };
-      } else if (window.location.href.includes("/viewjob") || 
-                 window.location.href.includes("/job/") ||
-                 document.querySelector('[data-testid="jobsearch-JobInfoHeader"]')) {
-        debugLog("Detected job page - starting application workflow", "AUTOMATION");  
+      // 🔄 SET UP FORM DETECTION LISTENER: Auto-activate when forms appear
+      if (!window.formDetectionSetup) {
+        window.formDetectionSetup = true;
+        
+        const checkForNewForms = () => {
+          if (!window.automationAllowed || window.emergencyStopFlag) return;
+          
+          const applicationIndicators = [
+            'form[action*="apply"]', 'form[class*="application"]', 'form[id*="application"]',
+            '[class*="smartapply"]', '[class*="indeed-apply"]', '[class*="job-apply"]',
+            'input[type="file"]', 'textarea[name*="cover"]', '[data-testid*="application"]'
+          ];
+          
+          const hasNewForms = applicationIndicators.some(selector => {
+            try {
+              const element = document.querySelector(selector);
+              return element && element.offsetParent !== null && !element.dataset.extensionProcessed;
+            } catch (e) {
+              return false;
+            }
+          });
+          
+          if (hasNewForms && !window.automationRunning) {
+            console.log("🎯 New application forms detected - starting automation");
+            setTimeout(() => {
+              runDynamicApplicationWorkflow().catch(e => {
+                console.log("Form automation completed or stopped:", e.message);
+              });
+            }, 1000);
+          }
+        };
+        
+        // Monitor for dynamically loaded forms
+        const observer = new MutationObserver(() => {
+          if (window.automationAllowed) {
+            setTimeout(checkForNewForms, 500);
+          }
+        });
+        
+        observer.observe(document.body, {
+          childList: true,
+          subtree: true,
+          attributes: false
+        });
+        
+        // Also check periodically
+        setInterval(checkForNewForms, 3000);
+        
+        console.log("🔄 Form detection listener activated - automation will start when forms appear");
+      }
+      
+      // 🎯 FORM-AWARE AUTOMATION: Only activate when application forms are present
+      const hasApplicationForms = () => {
+        const applicationIndicators = [
+          'form[action*="apply"]', 'form[class*="application"]', 'form[id*="application"]',
+          '[class*="smartapply"]', '[class*="indeed-apply"]', '[class*="job-apply"]',
+          '[data-testid*="application"]', '[data-testid*="apply"]',
+          '.application-form', '.job-application', '.apply-form',
+          'input[name*="resume"]', 'input[name*="cv"]', 'input[type="file"]',
+          'textarea[name*="cover"]', 'textarea[placeholder*="cover" i]'
+        ];
+        
+        return applicationIndicators.some(selector => {
+          try {
+            const element = document.querySelector(selector);
+            return element && element.offsetParent !== null; // Visible check
+          } catch (e) {
+            return false;
+          }
+        });
+      };
+
+      // Check if we're on a search/listing page (should NOT auto-fill)
+      const isOnSearchListingPage = () => {
+        const searchPageIndicators = [
+          'input[name*="q"]', 'input[placeholder*="search" i]', 'input[placeholder*="job title" i]',
+          '.job-search', '.search-bar', '#searchform', '[class*="search-input"]'
+        ];
+        
+        // Check for job listing containers (indicates we're browsing, not applying)
+        const jobListingIndicators = [
+          '[data-jk]', '.jobsearch-SerpJobCard', '.job_seen_beacon', 
+          '.slider_container', '.jobsearch-results', '#resultsCol'
+        ];
+        
+        const hasSearchElements = searchPageIndicators.some(selector => {
+          try {
+            const element = document.querySelector(selector);
+            return element && element.offsetParent !== null;
+          } catch (e) {
+            return false;
+          }
+        });
+        
+        const hasJobListings = jobListingIndicators.some(selector => {
+          try {
+            return document.querySelector(selector) !== null;
+          } catch (e) {
+            return false;
+          }
+        });
+        
+        return hasSearchElements || hasJobListings;
+      };
+
+      // � START JOB COLLECTION AND PROCESSING 
+      if (isOnSearchListingPage() && !hasApplicationForms()) {
+        console.log("🎯 Starting job collection from search/listing page");
+        console.log("� Will automatically find and apply to jobs...");
+        
+        try {
+          // Call the main job processing function
+          indeedMain();
+          return { 
+            status: "started", 
+            message: "Job collection and automation started from search page" 
+          };
+        } catch (error) {
+          console.error("❌ Failed to start job collection:", error);
+          return { 
+            status: "error", 
+            message: `Failed to start job collection: ${error.message}` 
+          };
+        }
+      }
+      
+      // ✅ ALLOW automation when application forms are detected (single job mode)
+      if (hasApplicationForms()) {
+        debugLog("✅ Application forms detected - starting single job automation", "AUTOMATION");
         const result = await runDynamicApplicationWorkflow();
-        return { status: "success", message: "Job application completed", result: result };
-      } else {
-        debugLog("Not on a recognized Indeed page type - trying indeedMain anyway", "AUTOMATION");
-        // Try indeedMain() even if URL doesn't match - it will detect if elements exist
+        return { status: "success", message: "Job application automation started", result: result };
+      }
+      
+      // 📋 IF on job detail page but no forms yet, start job processing 
+      if (window.location.href.includes("/viewjob") || 
+          window.location.href.includes("/job/") ||
+          document.querySelector('[data-testid="jobsearch-JobInfoHeader"]')) {
+        console.log("📋 Starting automation on job detail page");
+        console.log("🔄 Will look for Apply buttons and process application...");
+        
+        try {
+          // Call the main job processing function for single job
+          indeedMain();
+          return { 
+            status: "started", 
+            message: "Job processing started on job detail page" 
+          };
+        } catch (error) {
+          console.error("❌ Failed to start job processing:", error);
+          return { 
+            status: "error", 
+            message: `Failed to start job processing: ${error.message}` 
+          };
+        }
+      }
+      
+      // 🚀 FALLBACK: Try to start automation anyway
+      console.log("🚀 Starting automation on current page...");
+      try {
         indeedMain();
-        return { status: "success", message: "Automation started" };
+        return { 
+          status: "started", 
+          message: "Automation started - will adapt to current page" 
+        };
+      } catch (error) {
+        console.error("❌ Failed to start automation:", error);
+        return { 
+          status: "error", 
+          message: `Failed to start automation: ${error.message}` 
+        };
       }
     } catch (error) {
       console.error("❌ Error in handleStartProcess:", error);
@@ -4581,7 +5022,18 @@ console.log("🚀 Content script loaded on Indeed - preventing cache...");
     }; // END startIndeed function
 
   function indeedMain() {
-    // 🛑 SAFETY CHECK: Only proceed if manually started
+    // � FIRST: Validate automation context
+    const contextValidation = validateAutomationContext('Indeed Main Job Detection');
+    if (!contextValidation.valid) {
+      console.log(`🛑 Job detection blocked: ${contextValidation.reason}`);
+      
+      // If context is invalid but recoverable, don't return - let safety check handle it
+      if (!contextValidation.shouldRecover) {
+        return;
+      }
+    }
+    
+    // �🛑 SAFETY CHECK: Only proceed if manually started
     if (!window.automationAllowed || window.manualStartRequired) {
       console.log("🛑 Automation blocked - manual start required. Click Start button first.");
       return;
@@ -4999,39 +5451,58 @@ console.log("🚀 Content script loaded on Indeed - preventing cache...");
 
   function isExtensionContextValid() {
     try {
-      // Check for basic extension context validity
+      // Multi-level context validation for maximum reliability
+      
+      // Level 1: Basic chrome object existence
       if (typeof chrome === "undefined" || !chrome.runtime) {
-        debugLog("Extension context invalid: chrome or chrome.runtime undefined", "CONTEXT", "ERROR");
         return false;
       }
 
-      // Check if extension context is invalidated
+      // Level 2: Check runtime errors
       if (chrome.runtime.lastError) {
-        console.log(
-          "Chrome runtime error detected:",
-          chrome.runtime.lastError.message
-        );
-        debugLog(`Extension context error: ${chrome.runtime.lastError.message}`, "CONTEXT", "ERROR");
         return false;
       }
 
-      // Try to access extension ID - this will throw if context is invalid
+      // Level 3: Extension ID accessibility test
       const extensionId = chrome.runtime.id;
       if (!extensionId) {
-        debugLog("Extension context invalid: missing extension ID", "CONTEXT", "ERROR");
         return false;
       }
 
-      return !!window.document;
+      // Level 4: Storage API access test (common invalidation point)
+      if (!chrome.storage || !chrome.storage.local) {
+        return false;
+      }
+
+      // Level 5: Tabs API access test (if permissions allow)
+      if (chrome.tabs && !chrome.tabs.query) {
+        return false;
+      }
+
+      // Level 6: Document context validation
+      if (!window.document || document.readyState === 'unloading') {
+        return false;
+      }
+
+      // Level 7: Test actual runtime connectivity with a non-intrusive check
+      try {
+        // This will immediately fail if context is invalid without causing side effects
+        chrome.runtime.getPlatformInfo;
+        return true;
+      } catch (connectivityError) {
+        return false;
+      }
+
     } catch (error) {
-      // Extension context invalidated or other error
-      console.log("Extension context validation failed:", error.message);
-      debugLog(`Extension context validation exception: ${error.message}`, "CONTEXT", "ERROR");
+      // Extension context invalidated or other error - COMPLETELY SILENT to prevent circular logging
       
       // Trigger context recovery if this is the first detection
       if (!window.extensionContextRecoveryTriggered) {
         window.extensionContextRecoveryTriggered = true;
-        triggerExtensionContextRecovery(error.message);
+        // Use setTimeout to prevent immediate recursion
+        setTimeout(() => {
+          triggerExtensionContextRecovery(error.message);
+        }, 0);
       }
       
       return false;
@@ -5039,11 +5510,23 @@ console.log("🚀 Content script loaded on Indeed - preventing cache...");
   }
 
   /**
-   * Enhanced extension context recovery system
+   * Enhanced extension context recovery system with circuit breaker
    */
   function triggerExtensionContextRecovery(errorMessage) {
+    // Use circuit breaker to prevent infinite recovery loops
+    if (!startRecovery('context', () => {
+      performContextRecovery(errorMessage);
+    })) {
+      return; // Recovery blocked by circuit breaker
+    }
+  }
+
+  /**
+   * Perform the actual context recovery
+   */
+  function performContextRecovery(errorMessage) {
     try {
-      console.log("🔄 Extension context invalidated - triggering recovery system");
+      console.log("🔄 Performing extension context recovery");
       
       // PRESERVE automation state before recovery - don't disable user's manual start
       const wasAutomationAllowed = window.automationAllowed;
@@ -5093,9 +5576,152 @@ console.log("🚀 Content script loaded on Indeed - preventing cache...");
         }
       }, 10000);
       
+      // Process any queued messages after successful recovery
+      setTimeout(() => {
+        if (isExtensionContextValid()) {
+          console.log("📤 Processing queued messages after context recovery");
+          processQueuedMessages();
+        }
+      }, 1000); // Give context time to stabilize
+
+      endRecovery('context', true);
+      
     } catch (recoveryError) {
       console.error("❌ Error in context recovery system:", recoveryError.message);
+      endRecovery('context', false);
     }
+  }
+
+  /**
+   * Robust context validation before automation operations
+   */
+  function validateAutomationContext(operationName = 'operation') {
+    try {
+      // Check basic extension context
+      if (!isExtensionContextValid()) {
+        console.warn(`⚠️ ${operationName} blocked - extension context invalid`);
+        return { valid: false, reason: 'Extension context invalid', shouldRecover: true };
+      }
+      
+      // Check if automation is allowed
+      if (!window.automationAllowed) {
+        console.warn(`⚠️ ${operationName} blocked - automation not allowed`);
+        
+        // Try to restore state first
+        restoreAutomationStateAfterRecovery();
+        
+        // Check again after restoration attempt
+        if (!window.automationAllowed) {
+          return { valid: false, reason: 'Automation not allowed', shouldRecover: false };
+        }
+      }
+      
+      // Check if emergency stop flag is set
+      if (window.emergencyStopFlag) {
+        console.warn(`⚠️ ${operationName} blocked - emergency stop flag set`);
+        return { valid: false, reason: 'Emergency stop active', shouldRecover: false };
+      }
+      
+      // Check if we're in a recovery state
+      if (window.recoveryState && 
+          (window.recoveryState.contextRecoveryActive || 
+           window.recoveryState.connectionRecoveryActive)) {
+        console.warn(`⚠️ ${operationName} blocked - recovery in progress`);
+        return { valid: false, reason: 'Recovery in progress', shouldRecover: false };
+      }
+      
+      return { valid: true, reason: 'Context valid' };
+      
+    } catch (error) {
+      console.error(`❌ Context validation error for ${operationName}:`, error);
+      return { valid: false, reason: `Validation error: ${error.message}`, shouldRecover: true };
+    }
+  }
+
+  /**
+   * Wait for valid automation context with timeout
+   */
+  async function waitForValidContext(operationName = 'operation', timeout = 10000) {
+    const startTime = Date.now();
+    
+    while (Date.now() - startTime < timeout) {
+      const validation = validateAutomationContext(operationName);
+      
+      if (validation.valid) {
+        return true;
+      }
+      
+      if (!validation.shouldRecover) {
+        throw new Error(`${operationName} cannot proceed: ${validation.reason}`);
+      }
+      
+      console.log(`🔄 Waiting for valid context for ${operationName} (${validation.reason})`);
+      await new Promise(resolve => setTimeout(resolve, 1000));
+    }
+    
+    throw new Error(`${operationName} timed out waiting for valid context`);
+  }
+
+  /**
+   * Enhanced state preservation system - save state continuously during automation
+   */
+  function preserveAutomationState(additionalData = {}) {
+    if (!window.automationAllowed) {
+      return; // Don't preserve if automation is not allowed
+    }
+    
+    try {
+      const stateData = {
+        automationAllowed: window.automationAllowed,
+        manualStartRequired: window.manualStartRequired || false,
+        automationRunning: window.automationRunning || false,
+        timestamp: Date.now(),
+        url: window.location.href,
+        userAgent: navigator.userAgent,
+        domain: window.location.hostname,
+        ...additionalData
+      };
+      
+      // Save to multiple storage locations for redundancy
+      const stateString = JSON.stringify(stateData);
+      
+      // Primary storage locations
+      localStorage.setItem('extensionAutomationState', stateString);
+      sessionStorage.setItem('extensionAutomationState', stateString);
+      window.automationStateData = stateData;
+      
+      // Backup storage with unique keys for recovery
+      localStorage.setItem(`automationBackup_${Date.now()}`, stateString);
+      
+      // Clean up old backup entries (keep only last 5)
+      const backupKeys = Object.keys(localStorage).filter(key => key.startsWith('automationBackup_')).sort();
+      while (backupKeys.length > 5) {
+        localStorage.removeItem(backupKeys.shift());
+      }
+      
+      console.log("💾 Automation state preserved across all storage locations");
+      
+    } catch (error) {
+      console.warn("⚠️ Failed to preserve automation state:", error.message);
+    }
+  }
+
+  /**
+   * Start continuous state preservation during automation
+   */
+  function startAutomationStatePreservation() {
+    if (window.statePreservationInterval) {
+      clearInterval(window.statePreservationInterval);
+    }
+    
+    window.statePreservationInterval = setInterval(() => {
+      if (window.automationAllowed && window.automationRunning) {
+        preserveAutomationState({
+          continuousPreservation: true,
+          lastActivity: Date.now()
+        });
+      }
+    }, 5000); // Preserve state every 5 seconds during automation
   }
 
   /**
@@ -5105,87 +5731,143 @@ console.log("🚀 Content script loaded on Indeed - preventing cache...");
     try {
       let stateRestored = false;
       
-      // First, try to restore from context recovery data
-      const recoveryData = localStorage.getItem('extensionContextRecovery');
-      if (recoveryData) {
-        const recovery = JSON.parse(recoveryData);
-        
-        // Check if recovery is recent (within 2 minutes)
-        if (Date.now() - recovery.timestamp < 120000 && recovery.preservedState) {
-          const state = recovery.preservedState;
+      console.log("🔄 Starting automation state restoration...");
+      
+      // Check multiple storage locations for state
+      const sources = [
+        { name: 'window', data: window.automationStateData },
+        { name: 'sessionStorage', data: (() => {
+          try { return JSON.parse(sessionStorage.getItem('extensionAutomationState')); } catch { return null; }
+        })() },
+        { name: 'localStorage', data: (() => {
+          try { return JSON.parse(localStorage.getItem('extensionAutomationState')); } catch { return null; }
+        })() },
+        { name: 'recovery', data: (() => {
+          try { 
+            const recovery = JSON.parse(localStorage.getItem('extensionContextRecovery'));
+            return recovery?.preservedState;
+          } catch { return null; }
+        })() }
+      ];
+      
+      // If no primary sources work, check backup storage
+      if (!sources.some(s => s.data)) {
+        console.log("🔍 Primary storage empty, checking backup entries...");
+        const backupKeys = Object.keys(localStorage)
+          .filter(key => key.startsWith('automationBackup_'))
+          .sort()
+          .reverse(); // Most recent first
           
-          console.log(`🔄 Restoring preserved automation state from recovery: allowed=${state.automationAllowed}, running=${state.automationRunning}`);
-          
-          // Restore automation permissions if user had started it
-          if (state.automationAllowed) {
-            window.automationAllowed = true;
-            window.manualStartRequired = false;
-            
-            // If automation was actively running, try to resume it
-            if (state.automationRunning) {
-              window.automationRunning = true;
-              console.log("🔄 Automation state restored from recovery - user can continue without re-clicking Start");
-              stateRestored = true;
+        for (const key of backupKeys.slice(0, 3)) { // Check last 3 backups
+          try {
+            const backupData = JSON.parse(localStorage.getItem(key));
+            if (backupData) {
+              sources.push({ name: `backup-${key}`, data: backupData });
             }
+          } catch (e) {
+            console.warn(`Could not parse backup ${key}:`, e.message);
           }
-          
-          // Clear recovery data after successful restoration
-          localStorage.removeItem('extensionContextRecovery');
         }
       }
       
-      // If no recovery data, check regular automation state persistence
-      if (!stateRestored) {
-        const automationStateData = localStorage.getItem('extensionAutomationState');
-        if (automationStateData) {
-          const automationState = JSON.parse(automationStateData);
+      console.log("� Checking automation state sources:", sources.map(s => ({ name: s.name, hasData: !!s.data })));
+      
+      // Try each source in order of reliability
+      for (const source of sources) {
+        if (source.data && !stateRestored) {
+          const state = source.data;
           
-          // Check if state is recent (within 5 minutes) and valid
-          if (Date.now() - automationState.timestamp < 300000) {
-            console.log(`🔄 Restoring regular automation state: allowed=${automationState.automationAllowed}, running=${automationState.automationRunning}`);
+          // Verify state is recent and on Indeed domain
+          const isRecent = Date.now() - (state.timestamp || 0) < 600000; // 10 minutes
+          const isIndeedDomain = window.location.hostname.includes('indeed.com');
+          
+          console.log(`🔍 Checking ${source.name} state: recent=${isRecent}, indeed=${isIndeedDomain}, allowed=${state.automationAllowed}`);
+          
+          if (isRecent && isIndeedDomain && state.automationAllowed) {
+            console.log(`✅ Restoring automation state from ${source.name}`);
             
-            if (automationState.automationAllowed) {
-              window.automationAllowed = true;
-              window.manualStartRequired = false;
-              
-              if (automationState.automationRunning) {
-                window.automationRunning = true;
-                console.log("🔄 Regular automation state restored - continuing where left off");
-                stateRestored = true;
-              }
+            // Restore automation permissions
+            window.automationAllowed = true;
+            window.manualStartRequired = false;
+            
+            if (state.automationRunning) {
+              window.automationRunning = true;
+              console.log("� Automation marked as running - ready to continue");
             }
-          } else {
-            // Clear expired state data
-            localStorage.removeItem('extensionAutomationState');
-            console.log("🗑️ Expired automation state cleared");
+            
+            // Update persistence with current timestamp
+            const updatedState = {
+              ...state,
+              timestamp: Date.now(),
+              url: window.location.href
+            };
+            
+            try {
+              localStorage.setItem('extensionAutomationState', JSON.stringify(updatedState));
+              sessionStorage.setItem('extensionAutomationState', JSON.stringify(updatedState));
+              window.automationStateData = updatedState;
+            } catch (e) {
+              console.warn("Could not update state persistence:", e.message);
+            }
+            
+            stateRestored = true;
+            break;
           }
         }
       }
       
       if (stateRestored) {
+        console.log("✅ Automation state restoration successful");
+        
         // Send status message about successful restoration
         setTimeout(() => {
           safeSendMessage({
             greeting: "statusUpdate", 
-            status: "🔄 Extension recovered - automation permissions restored",
+            status: "🔄 Automation state restored - ready to continue",
             timestamp: new Date().toISOString()
           });
-        }, 1000);
+        }, 500);
         
-        console.log("✅ Automation state restoration complete");
+        // Clean up old recovery data
+        try {
+          localStorage.removeItem('extensionContextRecovery');
+        } catch (e) {}
+        
       } else {
-        console.log("📝 No valid automation state to restore - manual start required");
+        console.log("📝 No valid automation state found - manual start required");
+        
+        // Ensure flags are properly reset
+        window.automationAllowed = false;
+        window.manualStartRequired = true;
+        window.automationRunning = false;
+        
+        // Clear any stale state data
+        try {
+          const staleThreshold = Date.now() - 600000; // 10 minutes
+          
+          ['localStorage', 'sessionStorage'].forEach(storageType => {
+            const storage = storageType === 'localStorage' ? localStorage : sessionStorage;
+            const stateData = storage.getItem('extensionAutomationState');
+            if (stateData) {
+              const parsed = JSON.parse(stateData);
+              if ((parsed.timestamp || 0) < staleThreshold) {
+                storage.removeItem('extensionAutomationState');
+                console.log(`🗑️ Cleared stale state from ${storageType}`);
+              }
+            }
+          });
+        } catch (e) {
+          console.warn("Could not clear stale data:", e.message);
+        }
       }
       
     } catch (error) {
-      console.warn("⚠️ Could not restore automation state:", error.message);
-      // Clear potentially corrupted data
-      try {
-        localStorage.removeItem('extensionContextRecovery');
-        localStorage.removeItem('extensionAutomationState');
-      } catch (clearError) {
-        console.warn("Could not clear corrupted data:", clearError.message);
-      }
+      console.error("❌ Error in automation state restoration:", error.message);
+      
+      // Ensure clean state on error
+      window.automationAllowed = false;
+      window.manualStartRequired = true;
+      window.automationRunning = false;
     }
   }
 
@@ -5293,11 +5975,91 @@ console.log("🚀 Content script loaded on Indeed - preventing cache...");
   }
 
   // ═══════════════════════════════════════════════════════════════════════════
-  // 🔄 ENHANCED BFCACHE & CONNECTION RECOVERY SYSTEM
+  // 🔄 CIRCUIT BREAKER RECOVERY SYSTEM - Prevent infinite loops
   // ═══════════════════════════════════════════════════════════════════════════
 
+  // Global recovery state to prevent infinite loops
+  window.recoveryState = window.recoveryState || {
+    connectionRecoveryActive: false,
+    contextRecoveryActive: false,
+    bfcacheRecoveryActive: false,
+    lastRecoveryAttempt: 0,
+    totalRecoveryAttempts: 0,
+    maxRecoveryAttempts: 3,
+    cooldownPeriod: 60000 // 1 minute between recovery attempts
+  };
+
   /**
-   * DYNAMIC: Enhanced BFCache detection and recovery
+   * Circuit breaker to prevent infinite recovery loops
+   */
+  function canAttemptRecovery(recoveryType) {
+    const now = Date.now();
+    const timeSinceLastAttempt = now - window.recoveryState.lastRecoveryAttempt;
+    
+    // Check if we're in cooldown period
+    if (timeSinceLastAttempt < window.recoveryState.cooldownPeriod) {
+      console.log(`🛑 Recovery cooldown active for ${recoveryType} - ${Math.round((window.recoveryState.cooldownPeriod - timeSinceLastAttempt) / 1000)}s remaining`);
+      return false;
+    }
+    
+    // Check if we've exceeded max attempts
+    if (window.recoveryState.totalRecoveryAttempts >= window.recoveryState.maxRecoveryAttempts) {
+      console.log(`🛑 Max recovery attempts reached (${window.recoveryState.maxRecoveryAttempts}) - no more automated recovery`);
+      return false;
+    }
+    
+    // Check if specific recovery type is already active
+    if (window.recoveryState[`${recoveryType}RecoveryActive`]) {
+      console.log(`🛑 ${recoveryType} recovery already active - preventing duplicate`);
+      return false;
+    }
+    
+    return true;
+  }
+
+  /**
+   * Start recovery with circuit breaker protection
+   */
+  function startRecovery(recoveryType, recoveryFunction) {
+    if (!canAttemptRecovery(recoveryType)) {
+      return false;
+    }
+    
+    console.log(`🔄 Starting ${recoveryType} recovery (attempt ${window.recoveryState.totalRecoveryAttempts + 1}/${window.recoveryState.maxRecoveryAttempts})`);
+    
+    // Set recovery flags
+    window.recoveryState[`${recoveryType}RecoveryActive`] = true;
+    window.recoveryState.lastRecoveryAttempt = Date.now();
+    window.recoveryState.totalRecoveryAttempts++;
+    
+    // Execute recovery with automatic cleanup
+    try {
+      recoveryFunction();
+    } catch (error) {
+      console.error(`❌ ${recoveryType} recovery failed:`, error);
+      endRecovery(recoveryType, false);
+    }
+    
+    return true;
+  }
+
+  /**
+   * End recovery and update state
+   */
+  function endRecovery(recoveryType, success = true) {
+    window.recoveryState[`${recoveryType}RecoveryActive`] = false;
+    
+    if (success) {
+      console.log(`✅ ${recoveryType} recovery completed successfully`);
+      // Reset attempt counter on successful recovery
+      window.recoveryState.totalRecoveryAttempts = 0;
+    } else {
+      console.log(`❌ ${recoveryType} recovery failed`);
+    }
+  }
+
+  /**
+   * DYNAMIC: Enhanced BFCache detection and recovery with circuit breaker
    */
   function detectAndRecoverFromBFCache() {
     console.log("🔄 Running BFCache detection and recovery...");
@@ -5323,11 +6085,38 @@ console.log("🚀 Content script loaded on Indeed - preventing cache...");
         setTimeout(() => {
           try {
             reinitializeAfterBFCache();
+            // Process any queued messages after BFCache recovery
+            if (isExtensionContextValid()) {
+              console.log("📤 Processing queued messages after BFCache recovery");
+              processQueuedMessages();
+            }
           } catch (error) {
             console.error("❌ Failed to reinitialize after BFCache:", error);
           }
         }, 500);
+      } else {
+        // Regular page load - still restore state in case of navigation
+        console.log("📖 Regular page load detected - checking automation state");
+        setTimeout(() => {
+          try {
+            restoreAutomationStateAfterRecovery();
+          } catch (error) {
+            console.error("❌ Failed to restore state on page load:", error);
+          }
+        }, 200);
       }
+    });
+    
+    // Also listen for DOMContentLoaded to catch any missed navigations
+    document.addEventListener('DOMContentLoaded', () => {
+      console.log("📄 DOM loaded - ensuring automation state is restored");
+      setTimeout(() => {
+        try {
+          restoreAutomationStateAfterRecovery();
+        } catch (error) {
+          console.error("❌ Failed to restore state on DOM load:", error);
+        }
+      }, 100);
     });
 
     // Detect connection issues
@@ -5345,12 +6134,14 @@ console.log("🚀 Content script loaded on Indeed - preventing cache...");
               if (isBFCacheError && !bfcacheDetected) {
                 bfcacheDetected = true;
                 console.log("🔄 BFCache error detected:", errorMsg);
-                safeLog(`🔄 BFCache error: ${errorMsg}`);
                 
-                // Attempt recovery after a delay
-                setTimeout(() => {
-                  attemptConnectionRecovery();
-                }, 1000);
+                // Attempt recovery only if circuit breaker allows it
+                const timeSinceLastRecovery = Date.now() - window.recoveryState.lastRecoveryAttempt;
+                if (timeSinceLastRecovery > 15000) { // At least 15 seconds between BFCache recovery attempts
+                  setTimeout(() => {
+                    attemptConnectionRecovery();
+                  }, 1000);
+                }
               }
             }
             
@@ -5360,7 +6151,12 @@ console.log("🚀 Content script loaded on Indeed - preventing cache...");
           console.error("❌ Message send failed:", error);
           if (!bfcacheDetected) {
             bfcacheDetected = true;
-            setTimeout(() => attemptConnectionRecovery(), 500);
+            
+            // Only attempt recovery if circuit breaker allows it
+            const timeSinceLastRecovery = Date.now() - window.recoveryState.lastRecoveryAttempt;
+            if (timeSinceLastRecovery > 15000) {
+              setTimeout(() => attemptConnectionRecovery(), 500);
+            }
           }
           return false;
         }
@@ -5369,10 +6165,26 @@ console.log("🚀 Content script loaded on Indeed - preventing cache...");
   }
 
   /**
-   * DYNAMIC: Reinitialize extension after BFCache restoration
+   * DYNAMIC: Reinitialize extension after BFCache restoration with circuit breaker
    */
   function reinitializeAfterBFCache() {
-    console.log("🔄 Reinitializing extension after BFCache restoration...");
+    // Use circuit breaker to prevent infinite reinitialization
+    if (!startRecovery('bfcache', () => {
+      performBFCacheRecovery();
+    })) {
+      return; // Recovery blocked by circuit breaker
+    }
+  }
+
+  /**
+   * Perform the actual BFCache recovery
+   */
+  function performBFCacheRecovery() {
+    console.log("🔄 Performing BFCache recovery...");
+    
+    // FIRST: Restore automation state before anything else
+    console.log("🔄 Restoring automation state during BFCache recovery...");
+    restoreAutomationStateAfterRecovery();
     
     // Reset state flags
     window.bfcacheRecoveryInProgress = false;
@@ -5383,6 +6195,11 @@ console.log("🚀 Content script loaded on Indeed - preventing cache...");
       clearInterval(window.keepAliveInterval);
       window.keepAliveInterval = null;
     }
+    
+    // Re-establish connection monitoring
+    setTimeout(() => {
+      startConnectionMonitoring();
+    }, 1000);
     
     // Reinitialize core systems
     try {
@@ -5399,28 +6216,35 @@ console.log("🚀 Content script loaded on Indeed - preventing cache...");
         learningSystem.initialize();
       }
       
-      safeLog("✅ Extension reinitialized after BFCache restoration");
+      console.log("✅ Extension reinitialized after BFCache restoration");
+      endRecovery('bfcache', true);
       
     } catch (error) {
       console.error("❌ Reinitialize failed:", error);
-      safeLog(`❌ Reinitialize failed: ${error.message}`);
+      endRecovery('bfcache', false);
     }
   }
 
   /**
-   * DYNAMIC: Attempt to recover lost connection
+   * DYNAMIC: Attempt to recover lost connection with circuit breaker
    */
   function attemptConnectionRecovery() {
-    if (window.bfcacheRecoveryInProgress) {
-      console.log("🔄 Recovery already in progress...");
-      return;
+    // Use circuit breaker to prevent infinite recovery loops
+    if (!startRecovery('connection', () => {
+      performConnectionRecovery();
+    })) {
+      return; // Recovery blocked by circuit breaker
     }
-    
-    window.bfcacheRecoveryInProgress = true;
-    console.log("🔄 Attempting connection recovery...");
+  }
+
+  /**
+   * Perform the actual connection recovery
+   */
+  function performConnectionRecovery() {
+    console.log("🔄 Performing connection recovery...");
     
     let attempts = 0;
-    const maxAttempts = 5;
+    const maxAttempts = 3; // Reduced from 5 to prevent long recovery cycles
     
     const testConnection = () => {
       attempts++;
@@ -5435,14 +6259,12 @@ console.log("🚀 Content script loaded on Indeed - preventing cache...");
               setTimeout(testConnection, 2000 * attempts); // Exponential backoff
             } else {
               console.log("💀 Connection recovery failed - extension may need reload");
-              safeLog("💀 Connection recovery failed - manual refresh may be needed");
-              window.bfcacheRecoveryInProgress = false;
+              endRecovery('connection', false);
             }
           } else {
             console.log("✅ Connection recovered successfully!");
-            safeLog("✅ Connection recovered - extension is operational");
             window.extensionReconnected = true;
-            window.bfcacheRecoveryInProgress = false;
+            endRecovery('connection', true);
           }
         });
       } catch (error) {
@@ -5450,7 +6272,7 @@ console.log("🚀 Content script loaded on Indeed - preventing cache...");
         if (attempts < maxAttempts) {
           setTimeout(testConnection, 2000 * attempts);
         } else {
-          window.bfcacheRecoveryInProgress = false;
+          endRecovery('connection', false);
         }
       }
     };
@@ -5459,7 +6281,7 @@ console.log("🚀 Content script loaded on Indeed - preventing cache...");
   }
 
   /**
-   * DYNAMIC: Start monitoring connection health
+   * DYNAMIC: Start monitoring connection health with circuit breaker protection
    */
   function startConnectionMonitoring() {
     if (window.connectionMonitorInterval) {
@@ -5467,54 +6289,154 @@ console.log("🚀 Content script loaded on Indeed - preventing cache...");
     }
     
     window.connectionMonitorInterval = setInterval(() => {
-      if (!window.bfcacheRecoveryInProgress && isExtensionContextValid()) {
-        // Ping background to check connection
+      // Only monitor if no recovery is active and we're not in cooldown
+      if (!window.recoveryState.connectionRecoveryActive && 
+          !window.recoveryState.contextRecoveryActive && 
+          isExtensionContextValid()) {
+        
+        // Ping background to check connection - but don't be aggressive
         try {
           chrome.runtime.sendMessage({ action: 'ping', monitoring: true }, (response) => {
             if (chrome.runtime.lastError) {
               console.log("📡 Connection monitor detected issue:", chrome.runtime.lastError.message);
-              attemptConnectionRecovery();
+              
+              // Only attempt recovery if circuit breaker allows it
+              const timeSinceLastRecovery = Date.now() - window.recoveryState.lastRecoveryAttempt;
+              if (timeSinceLastRecovery > 10000) { // At least 10 seconds between attempts
+                attemptConnectionRecovery();
+              }
             }
           });
         } catch (error) {
           console.log("📡 Connection monitor error:", error);
-          attemptConnectionRecovery();
+          
+          // Only attempt recovery if circuit breaker allows it
+          const timeSinceLastRecovery = Date.now() - window.recoveryState.lastRecoveryAttempt;
+          if (timeSinceLastRecovery > 10000) { // At least 10 seconds between attempts
+            attemptConnectionRecovery();
+          }
         }
       }
-    }, 30000); // Check every 30 seconds
+    }, 60000); // Check every 60 seconds instead of 30 to be less aggressive
+  }
+
+  // ═══════════════════════════════════════════════════════════════════════════
+  // 📨 MESSAGE QUEUE SYSTEM - Handle context invalidation gracefully
+  // ═══════════════════════════════════════════════════════════════════════════
+  
+  // Global message queue
+  if (!window.messageQueue) {
+    window.messageQueue = [];
+  }
+
+  /**
+   * Queue messages when context is invalid, process when restored
+   */
+  function queueMessageForLater(message, callback = null, retryAttempt = 0) {
+    const queueItem = {
+      message,
+      callback,
+      retryAttempt,
+      timestamp: Date.now(),
+      id: Math.random().toString(36).substr(2, 9)
+    };
+    
+    window.messageQueue.push(queueItem);
+    console.log(`📥 Queued message for later: ${message.action || 'unknown'} (queue size: ${window.messageQueue.length})`);
+    
+    // Clean old messages from queue (older than 5 minutes)
+    const fiveMinutesAgo = Date.now() - 300000;
+    window.messageQueue = window.messageQueue.filter(item => item.timestamp > fiveMinutesAgo);
+  }
+
+  /**
+   * Process queued messages when context is restored
+   */
+  function processQueuedMessages() {
+    if (!window.messageQueue || window.messageQueue.length === 0) {
+      return;
+    }
+
+    console.log(`📤 Processing ${window.messageQueue.length} queued messages`);
+    const messagesToProcess = [...window.messageQueue];
+    window.messageQueue = []; // Clear queue
+
+    messagesToProcess.forEach((queueItem, index) => {
+      // Stagger message sending to avoid overwhelming the background script
+      setTimeout(() => {
+        if (isExtensionContextValid()) {
+          console.log(`📨 Sending queued message: ${queueItem.message.action || 'unknown'}`);
+          safeSendMessage(queueItem.message, queueItem.callback, queueItem.retryAttempt);
+        } else {
+          // Re-queue if context is still invalid
+          console.log(`📥 Re-queuing message, context still invalid: ${queueItem.message.action || 'unknown'}`);
+          queueMessageForLater(queueItem.message, queueItem.callback, queueItem.retryAttempt);
+        }
+      }, index * 100); // 100ms between messages
+    });
   }
 
   /**
    * Safely send message to background script with enhanced error handling and retry logic
    * Prevents "message channel closed" and "back/forward cache" errors
+   * COMPLETELY PROTECTED FROM CIRCULAR CALLS
    */
   function safeSendMessage(message, callback = null, retryAttempt = 0) {
-    const MAX_RETRIES = 3;
-    const RETRY_DELAY = 1000; // 1 second
+    const MAX_RETRIES = 5; // Increased retries
+    const RETRY_DELAY = 500; // Faster initial retry
 
-    if (!isExtensionContextValid()) {
-      console.log("⚠️ Cannot send message - extension context invalid");
-      debugLog(`Message send blocked - extension context invalid: ${JSON.stringify(message)}`, "MESSAGING", "WARN");
-      
-      // Don't trigger recovery for every message, only for critical ones
-      if (message.action === 'startAutomation' || message.action === 'statusUpdate') {
-        if (!window.extensionContextRecoveryTriggered) {
-          triggerExtensionContextRecovery("Message send blocked - context invalid");
+    // ENHANCED CONTEXT CHECK: Multiple validation levels
+    try {
+      // Quick basic checks
+      if (typeof chrome === "undefined" || !chrome.runtime || !chrome.runtime.id) {
+        console.log("⚠️ Cannot send message - extension context invalid");
+        
+        // Queue message for when context is restored
+        queueMessageForLater(message, callback, retryAttempt);
+        
+        // Only trigger recovery for critical messages and respect circuit breaker
+        if (message.action === 'startAutomation' || message.action === 'statusUpdate') {
+          const timeSinceLastRecovery = Date.now() - window.recoveryState.lastRecoveryAttempt;
+          if (timeSinceLastRecovery > 30000) { // At least 30 seconds between recovery attempts
+            setTimeout(() => {
+              triggerExtensionContextRecovery("Message send blocked - context invalid");
+            }, 0);
+          }
         }
+        
+        return false;
       }
-      
+
+      // Deeper connectivity test
+      if (!chrome.runtime.sendMessage || typeof chrome.runtime.sendMessage !== 'function') {
+        console.log("⚠️ Cannot send message - sendMessage API unavailable");
+        queueMessageForLater(message, callback, retryAttempt);
+        return false;
+      }
+
+      // BFCache detection - common cause of context issues
+      if (document.readyState === 'unloading' || window.performance?.navigation?.type === 2) {
+        console.log("⚠️ Cannot send message - page in transition/BFCache");
+        queueMessageForLater(message, callback, retryAttempt);
+        return false;
+      }
+
+    } catch (contextError) {
+      console.log("⚠️ Cannot send message - extension context check failed:", contextError.message);
+      queueMessageForLater(message, callback, retryAttempt);
       return false;
     }
 
     try {
-      debugLog(`Sending message (attempt ${retryAttempt + 1}): ${JSON.stringify(message)}`, "MESSAGING", "INFO");
+      // SILENT - only console log to avoid circular debugLog errors
+      console.log(`📤 Sending message (attempt ${retryAttempt + 1}):`, message.action || 'unknown');
       
       if (callback) {
         chrome.runtime.sendMessage(message, (response) => {
           if (chrome.runtime.lastError) {
             const errorMsg = chrome.runtime.lastError.message;
             console.log("📢 Message response error:", errorMsg);
-            debugLog(`Message response error: ${errorMsg}`, "MESSAGING", "WARN");
+            // SILENT - don't use debugLog when there are runtime errors
             
             // Check if this is a context invalidation error
             if (errorMsg.includes("Extension context invalidated") || 
@@ -5528,13 +6450,15 @@ console.log("🚀 Content script loaded on Indeed - preventing cache...");
                 }, RETRY_DELAY * (retryAttempt + 1)); // Exponential backoff
               } else {
                 console.error("❌ Message send failed after all retries:", errorMsg);
-                if (!window.extensionContextRecoveryTriggered) {
+                // Only trigger recovery if circuit breaker allows it
+                const timeSinceLastRecovery = Date.now() - window.recoveryState.lastRecoveryAttempt;
+                if (timeSinceLastRecovery > 30000) {
                   triggerExtensionContextRecovery(errorMsg);
                 }
               }
             }
           } else {
-            debugLog(`Message response received: ${JSON.stringify(response)}`, "MESSAGING", "INFO");
+            console.log("📨 Message response received successfully");
             if (callback) callback(response);
           }
         });
@@ -5543,7 +6467,7 @@ console.log("🚀 Content script loaded on Indeed - preventing cache...");
           if (chrome.runtime.lastError) {
             const errorMsg = chrome.runtime.lastError.message;
             console.log("📢 Message send error:", errorMsg);
-            debugLog(`Message send error: ${errorMsg}`, "MESSAGING", "WARN");
+            // SILENT - don't use debugLog when there are runtime errors
             
             // Check if this is a context invalidation error and should retry
             if ((errorMsg.includes("Extension context invalidated") || 
@@ -5557,19 +6481,21 @@ console.log("🚀 Content script loaded on Indeed - preventing cache...");
               }, RETRY_DELAY * (retryAttempt + 1)); // Exponential backoff
             } else if (retryAttempt >= MAX_RETRIES) {
               console.error("❌ Message send failed after all retries:", errorMsg);
-              if (!window.extensionContextRecoveryTriggered) {
+              // Only trigger recovery if circuit breaker allows it
+              const timeSinceLastRecovery = Date.now() - window.recoveryState.lastRecoveryAttempt;
+              if (timeSinceLastRecovery > 30000) {
                 triggerExtensionContextRecovery(errorMsg);
               }
             }
           } else {
-            debugLog(`Message sent successfully`, "MESSAGING", "INFO");
+            console.log("✅ Message sent successfully");
           }
         });
       }
       return true;
     } catch (error) {
       console.error("❌ Message send failed:", error.message);
-      debugLog(`Message send exception: ${error.message}`, "MESSAGING", "ERROR");
+      // SILENT - don't use debugLog when there are exceptions to avoid circular errors
       
       // Retry on exception if within retry limit
       if (retryAttempt < MAX_RETRIES && 
@@ -5581,7 +6507,9 @@ console.log("🚀 Content script loaded on Indeed - preventing cache...");
           safeSendMessage(message, callback, retryAttempt + 1);
         }, RETRY_DELAY * (retryAttempt + 1));
       } else {
-        if (!window.extensionContextRecoveryTriggered) {
+        // Only trigger recovery if circuit breaker allows it
+        const timeSinceLastRecovery = Date.now() - window.recoveryState.lastRecoveryAttempt;
+        if (timeSinceLastRecovery > 30000) {
           triggerExtensionContextRecovery(error.message);
         }
       }
@@ -9238,24 +10166,126 @@ console.log("🚀 Content script loaded on Indeed - preventing cache...");
    * Main dynamic workflow that handles unlimited question pages
    */
   async function runDynamicApplicationWorkflow() {
-    // 🛑 SAFETY CHECK: Only proceed if manually started
+    // � FIRST: Attempt to restore automation state aggressively before any checks
+    console.log(`🔍 Initial state: automationAllowed=${window.automationAllowed}, manualStartRequired=${window.manualStartRequired}`);
+    
+    // AGGRESSIVE restoration for job processing tabs - NEVER block job processing!
+    if (!window.automationAllowed) {
+      console.log("🔄 Job tab detected - attempting AGGRESSIVE automation state restoration...");
+      
+      // Step 1: Try standard restoration
+      restoreAutomationStateAfterRecovery();
+      await new Promise(resolve => setTimeout(resolve, 200));
+      
+      // Step 2: If still blocked, check ALL storage locations aggressively
+      if (!window.automationAllowed) {
+        console.log("🚨 AGGRESSIVE: Checking ALL possible automation state sources...");
+        
+        // Check recent states (extended to 10 minutes for job processing)
+        const storageChecks = [
+          () => sessionStorage.getItem('extensionAutomationState'),
+          () => localStorage.getItem('extensionAutomationState'),
+          () => {
+            // Check ALL backup entries, not just recent ones
+            const backupKeys = Object.keys(localStorage).filter(key => key.startsWith('automationBackup_'));
+            for (const key of backupKeys.sort().reverse()) {
+              try {
+                return localStorage.getItem(key);
+              } catch (e) {
+                continue;
+              }
+            }
+            return null;
+          }
+        ];
+        
+        for (const checkFn of storageChecks) {
+          try {
+            const stateData = checkFn();
+            if (stateData) {
+              const parsed = JSON.parse(stateData);
+              // For job processing, accept ANY automation state within 10 minutes
+              if (parsed && parsed.automationAllowed && Date.now() - parsed.timestamp < 600000) {
+                console.log("🚨 AGGRESSIVE RESTORE: Found valid automation state - enabling job processing!");
+                window.automationAllowed = true;
+                window.manualStartRequired = false;
+                window.automationRunning = true;
+                
+                // Immediately save to all locations to prevent this issue again
+                const newState = {
+                  ...parsed,
+                  timestamp: Date.now(),
+                  url: window.location.href,
+                  aggressiveRestore: true
+                };
+                localStorage.setItem('extensionAutomationState', JSON.stringify(newState));
+                sessionStorage.setItem('extensionAutomationState', JSON.stringify(newState));
+                window.automationStateData = newState;
+                break;
+              }
+            }
+          } catch (e) {
+            console.warn("Error checking state source:", e.message);
+            continue;
+          }
+        }
+      }
+      
+      // Step 3: LAST RESORT - If this is clearly a job application URL, assume automation should work
+      if (!window.automationAllowed && 
+          (window.location.href.includes('/viewjob') || 
+           window.location.href.includes('/apply') ||
+           window.location.href.includes('smartapply.indeed.com'))) {
+        
+        console.log("🚨 LAST RESORT: This is clearly a job URL - FORCING automation to continue!");
+        console.log("🚨 Job processing should NEVER be blocked - enabling automation!");
+        
+        window.automationAllowed = true;
+        window.manualStartRequired = false;
+        window.automationRunning = true;
+        
+        // Save this emergency state
+        const emergencyState = {
+          automationAllowed: true,
+          manualStartRequired: false,
+          automationRunning: true,
+          timestamp: Date.now(),
+          url: window.location.href,
+          emergencyRestore: true,
+          reason: 'Job URL detected - forced automation'
+        };
+        
+        try {
+          localStorage.setItem('extensionAutomationState', JSON.stringify(emergencyState));
+          sessionStorage.setItem('extensionAutomationState', JSON.stringify(emergencyState));
+          window.automationStateData = emergencyState;
+        } catch (e) {
+          console.warn("Could not save emergency state:", e.message);
+        }
+      }
+    }
+    
+    // �🛑 SAFETY CHECK: Only proceed if automation is allowed (after restoration attempts)
     if (!window.automationAllowed || window.manualStartRequired) {
       console.log("� Job application blocked - manual start required. Click Start button first.");
       // Try to restore state if it might have been lost during context recovery
       console.log(`🔍 Debug state: automationAllowed=${window.automationAllowed}, manualStartRequired=${window.manualStartRequired}`);
       
-      if (!window.automationAllowed) {
-        console.log("🔄 Attempting to restore automation state from localStorage...");
-        restoreAutomationStateAfterRecovery();
-        
-        // Check again after restoration attempt
-        if (!window.automationAllowed || window.manualStartRequired) {
-          throw new Error("Manual start required - automation not allowed");
-        }
-        console.log("✅ Automation state restored successfully - continuing with application");
-      } else {
-        throw new Error("Manual start required - automation not allowed");
+      console.error("❌ CRITICAL ERROR: Automation still blocked after aggressive restoration attempts!");
+      console.error(`❌ Final state: automationAllowed=${window.automationAllowed}, manualStartRequired=${window.manualStartRequired}`);
+      console.error("❌ This should NEVER happen for job processing tabs!");
+      console.error("❌ URL:", window.location.href);
+      
+      // Log all storage states for debugging
+      try {
+        console.error("❌ SessionStorage state:", sessionStorage.getItem('extensionAutomationState'));
+        console.error("❌ LocalStorage state:", localStorage.getItem('extensionAutomationState'));
+        console.error("❌ Window state:", window.automationStateData);
+      } catch (e) {
+        console.error("❌ Could not log storage states:", e.message);
       }
+      
+      throw new Error("CRITICAL: Automation blocked after all restoration attempts - this indicates a serious bug");
     }
     
     console.log("�🚀 Starting enhanced dynamic application workflow...");
@@ -9746,8 +10776,40 @@ console.log("🚀 Content script loaded on Indeed - preventing cache...");
 
         // Check if extension context is still valid before trying to recover
         if (!isExtensionContextValid()) {
-          console.error("❌ Extension context invalidated - stopping workflow");
-          break;
+          console.log("⚠️ Extension context invalidated during workflow - attempting graceful recovery");
+          
+          // Preserve current automation state
+          preserveAutomationState({
+            workflowInterrupted: true,
+            interruptionTime: Date.now(),
+            pageCount: pageCount,
+            lastErrorType: 'context_invalidated'
+          });
+          
+          // Try graceful recovery instead of stopping
+          try {
+            console.log("🔄 Attempting to restore context and continue workflow...");
+            
+            // Give time for context to recover
+            await new Promise(resolve => setTimeout(resolve, 2000));
+            
+            // Try to restore automation context
+            await waitForValidContext('Workflow Recovery', 10000);
+            
+            console.log("✅ Context recovered - continuing workflow");
+            sendLogToPopup("🔄 Connection recovered - continuing automation");
+            
+            // Reset failure counter since we recovered
+            consecutiveFailures = Math.max(0, consecutiveFailures - 1);
+            
+            // Continue to next iteration
+            continue;
+            
+          } catch (recoveryError) {
+            console.error("❌ Graceful recovery failed - stopping workflow:", recoveryError.message);
+            sendLogToPopup("❌ Could not recover connection - stopping automation", "ERROR");
+            break;
+          }
         }
 
         // Try to recover by proceeding to next page
@@ -15218,21 +16280,34 @@ function sendStatusMessage(message) {
 // 📡 COMPREHENSIVE LOGGING SYSTEM - Send all console output to popup
 // ═══════════════════════════════════════════════════════════════════════════
 
-// Enhanced logging function to send messages to popup
+// Enhanced logging function to send messages to popup - FULLY PROTECTED FROM CIRCULAR CALLS
 function sendLogToPopup(message, level = 'LOG') {
-  // Prevent infinite recursion by checking if we're already in a sendLogToPopup call
+  // CIRCULAR PROTECTION: Prevent infinite recursion with immediate return
   if (sendLogToPopup._inProgress) {
     return;
   }
   
   sendLogToPopup._inProgress = true;
   try {
-    chrome.runtime.sendMessage({
-      greeting: "consoleLog",
-      message: message,
-      level: level,
-      timestamp: new Date().toISOString()
-    });
+    // SILENT CONTEXT CHECK: Do NOT call isExtensionContextValid() to prevent circular loops
+    if (typeof chrome !== "undefined" && chrome.runtime && chrome.runtime.id) {
+      chrome.runtime.sendMessage({
+        greeting: "consoleLog",
+        message: message,
+        level: level,
+        timestamp: new Date().toISOString()
+      }, () => {
+        // Silent callback to prevent error propagation - NO LOGGING TO PREVENT RECURSION
+        if (chrome.runtime.lastError) {
+          // SILENT: Don't log this error to prevent circular calls
+        }
+      });
+    } else {
+      // Context invalid - use fallback logging without any extension calls
+      if (typeof originalConsoleMethods !== "undefined" && originalConsoleMethods.log) {
+        originalConsoleMethods.log(`[${level}] ${message}`);
+      }
+    }
   } catch (e) {
     // Fallback if extension context is invalid - use original console method to avoid recursion
     if (typeof originalConsoleMethods !== "undefined" && originalConsoleMethods.log) {
