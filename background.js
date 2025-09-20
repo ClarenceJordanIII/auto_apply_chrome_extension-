@@ -452,6 +452,24 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     return true;
   }
 
+  // Handle tab closure after success
+  if (message.action === 'closeTab') {
+    console.log("🔄 Closing tab after successful application");
+    
+    if (sender.tab && sender.tab.id) {
+      chrome.tabs.remove(sender.tab.id, () => {
+        if (chrome.runtime.lastError) {
+          console.warn("⚠️ Error closing tab:", chrome.runtime.lastError.message);
+        } else {
+          console.log("✅ Tab closed successfully");
+        }
+      });
+    }
+    
+    sendResponse({ status: "tab_closed" });
+    return true;
+  }
+
   // Handle unknown actions
   console.warn("Unknown message action:", message.action);
   sendResponse({ status: "error", message: "Unknown action" });

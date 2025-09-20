@@ -66,17 +66,40 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
     saveExtensionStatus(isStillRunning, request.status, getFeedHistory());
   }
 
-  // Listen for console logs from content script/background
+  // Listen for console logs from content script/background - ENHANCED
   if (request.greeting === "consoleLog") {
-    console.log("Console log from content script:", request.message);
+    // Also log to popup's console for debugging
+    const logMethod = {
+      'ERROR': console.error,
+      'WARN': console.warn,
+      'INFO': console.info,
+      'DEBUG': console.debug,
+      'LOG': console.log
+    }[request.level] || console.log;
     
-    const feed = document.getElementById('feed-container');
-    if (feed) {
-      const logMessage = document.createElement('div');
-      logMessage.className = 'timeline-item';
-      
+    logMethod("📡 Content Script:", request.message);
+    
+      const feed = document.getElementById('feed-container');
+      if (feed) {
+        // Check if this log level should be displayed
+        const logLevelFilter = getLogLevelFilter();
+        if (!shouldShowLogLevel(request.level || 'LOG', logLevelFilter)) {
+          return; // Skip this log message
+        }
+        
+        const logMessage = document.createElement('div');
+        logMessage.className = 'timeline-item';
+        logMessage.setAttribute('data-log-level', request.level || 'LOG');      // Enhanced icon styling based on log level
       const iconDiv = document.createElement('div');
-      iconDiv.className = `timeline-icon ${request.level === 'ERROR' ? 'red' : request.level === 'WARN' ? 'yellow' : 'blue'}`;
+      const iconClass = {
+        'ERROR': 'red',
+        'WARN': 'yellow', 
+        'INFO': 'blue',
+        'DEBUG': 'gray',
+        'LOG': 'green'
+      }[request.level] || 'blue';
+      
+      iconDiv.className = `timeline-icon ${iconClass}`;
       logMessage.appendChild(iconDiv);
       
       // Console icon
@@ -98,12 +121,40 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
       
       const textDiv = document.createElement('div');
       textDiv.className = 'timeline-text';
-      textDiv.innerHTML = `<strong>[${request.level || 'LOG'}]</strong> ${request.message}`;
-      if (request.level === 'ERROR') {
-        textDiv.style.color = '#ef4444';
-      } else if (request.level === 'WARN') {
-        textDiv.style.color = '#f59e0b';
+      
+      // Enhanced text styling with proper colors and icons
+      const levelInfo = {
+        'ERROR': { color: '#ef4444', prefix: '❌' },
+        'WARN': { color: '#f59e0b', prefix: '⚠️' },
+        'INFO': { color: '#3b82f6', prefix: 'ℹ️' },
+        'DEBUG': { color: '#6b7280', prefix: '🔍' },
+        'LOG': { color: '#10b981', prefix: '📝' }
+      };
+      
+      const level = request.level || 'LOG';
+      const info = levelInfo[level] || levelInfo.LOG;
+      
+      textDiv.innerHTML = `<strong>${info.prefix} [${level}]</strong> ${request.message}`;
+      textDiv.style.color = info.color;
+      
+      // Add special formatting for specific message types
+      if (request.message.includes('SUCCESS') || request.message.includes('✅')) {
+        textDiv.style.backgroundColor = '#dcfce7';
+        textDiv.style.padding = '4px 8px';
+        textDiv.style.borderRadius = '4px';
+        textDiv.style.border = '1px solid #bbf7d0';
+      } else if (level === 'ERROR') {
+        textDiv.style.backgroundColor = '#fef2f2';
+        textDiv.style.padding = '4px 8px';
+        textDiv.style.borderRadius = '4px';
+        textDiv.style.border = '1px solid #fecaca';
+      } else if (level === 'WARN') {
+        textDiv.style.backgroundColor = '#fffbeb';
+        textDiv.style.padding = '4px 8px';
+        textDiv.style.borderRadius = '4px';
+        textDiv.style.border = '1px solid #fed7aa';
       }
+      
       contentDiv.appendChild(textDiv);
       
       const timeElement = document.createElement('time');
@@ -130,6 +181,9 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
 
 
 
+
+// Initialize feedHistory array
+let feedHistory = [];
 
 const statusIndicatorRed = document.getElementById('status-indicator-red');
 const statusIndicatorGrey = document.getElementById('status-indicator-grey');
@@ -164,6 +218,12 @@ startBtn.addEventListener("click", (e) => {
 stopBtn.addEventListener("click", (e) => {
   if (e.target && e.target.id === 'stop-btn') {
     console.log("Stop button clicked");
+    
+    // Show confirmation dialog
+    if (!confirm("⚠️ Are you sure you want to stop the automation?\n\nThis will halt all job applications in progress.")) {
+      console.log("❌ Stop cancelled by user");
+      return;
+    }
     
     // Clear logs and messages immediately
     clearLogsAndMessages();
@@ -202,11 +262,21 @@ stopBtn.addEventListener("click", (e) => {
           console.log("Background script job queue stopped.");
           // Confirm full stop with updated message
           liveTogle(false, "✅ All automation stopped");
+          
+          // Show success notification
+          alert("✅ SUCCESS!\n\nAutomation has been completely stopped.\nAll job applications have been halted.");
         }
         if (chrome.runtime.lastError) {
           console.error("Error stopping background script:", chrome.runtime.lastError.message);
           // Still update UI even if there was an error
           liveTogle(false, "⚠️ Stop attempted");
+          
+          // Show fallback notification
+          alert("⚠️ STOP ATTEMPTED\n\nAutomation stop initiated.\nSome processes may still be finishing.");
+        } else if (!response || response.status !== "stopped") {
+          // Show fallback notification if no proper response
+          liveTogle(false, "⚠️ Stop signal sent");
+          alert("📤 STOP SIGNAL SENT\n\nStop command has been sent to all processes.\nAutomation should halt shortly.");
         }
       });
       
@@ -452,9 +522,112 @@ const liveTogle = (flag, customMessage = null) => {
   saveExtensionStatus(flag, statusElement.textContent, getFeedHistory());
 }
 
+// ═══════════════════════════════════════════════════════════════════════════
+// 📊 LOG FILTERING SYSTEM - Control what logs are displayed
+// ═══════════════════════════════════════════════════════════════════════════
+
+// Get current log level filter setting
+function getLogLevelFilter() {
+  return localStorage.getItem('logLevelFilter') || 'INFO'; // Default to INFO and above
+}
+
+// Set log level filter
+function setLogLevelFilter(level) {
+  localStorage.setItem('logLevelFilter', level);
+  applyLogLevelFilter();
+}
+
+// Check if a log level should be shown based on filter
+function shouldShowLogLevel(messageLevel, filterLevel) {
+  const levels = ['DEBUG', 'LOG', 'INFO', 'WARN', 'ERROR'];
+  const messageLevelIndex = levels.indexOf(messageLevel);
+  const filterLevelIndex = levels.indexOf(filterLevel);
+  
+  // Show if message level is at or above filter level
+  return messageLevelIndex >= filterLevelIndex;
+}
+
+// Apply log level filter to existing messages
+function applyLogLevelFilter() {
+  const filter = getLogLevelFilter();
+  const logMessages = document.querySelectorAll('[data-log-level]');
+  
+  logMessages.forEach(message => {
+    const messageLevel = message.getAttribute('data-log-level');
+    if (shouldShowLogLevel(messageLevel, filter)) {
+      message.style.display = '';
+    } else {
+      message.style.display = 'none';
+    }
+  });
+}
+
+// Add log filter controls (call after DOM is ready)
+function addLogFilterControls() {
+  const feed = document.getElementById('feed-container');
+  if (feed) {
+    // Create filter controls container
+    const filterContainer = document.createElement('div');
+    filterContainer.style.cssText = `
+      padding: 8px;
+      background: #f9fafb;
+      border-bottom: 1px solid #e5e7eb;
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      font-size: 12px;
+    `;
+    
+    const label = document.createElement('span');
+    label.textContent = 'Log Level:';
+    label.style.fontWeight = '500';
+    filterContainer.appendChild(label);
+    
+    // Create filter dropdown
+    const select = document.createElement('select');
+    select.style.cssText = `
+      padding: 2px 6px;
+      border: 1px solid #d1d5db;
+      border-radius: 4px;
+      font-size: 12px;
+    `;
+    
+    const levels = [
+      { value: 'DEBUG', label: '🔍 All (Debug+)' },
+      { value: 'LOG', label: '📝 Log+' },
+      { value: 'INFO', label: 'ℹ️ Info+' },
+      { value: 'WARN', label: '⚠️ Warnings+' },
+      { value: 'ERROR', label: '❌ Errors Only' }
+    ];
+    
+    levels.forEach(level => {
+      const option = document.createElement('option');
+      option.value = level.value;
+      option.textContent = level.label;
+      if (level.value === getLogLevelFilter()) {
+        option.selected = true;
+      }
+      select.appendChild(option);
+    });
+    
+    select.addEventListener('change', (e) => {
+      setLogLevelFilter(e.target.value);
+    });
+    
+    filterContainer.appendChild(select);
+    
+    // Insert filter controls before the feed
+    feed.parentElement.insertBefore(filterContainer, feed);
+  }
+}
+
 // Initialize status restoration when popup loads
 document.addEventListener('DOMContentLoaded', () => {
   console.log("🔄 Popup loaded - restoring status...");
-  setTimeout(restoreExtensionStatus, 100); // Small delay to ensure DOM is ready
+  setTimeout(() => {
+    restoreExtensionStatus();
+    addLogFilterControls(); // Add log filtering controls
+    applyLogLevelFilter(); // Apply current filter
+  }, 100); // Small delay to ensure DOM is ready
 });
 

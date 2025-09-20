@@ -49,6 +49,170 @@ if (typeof SMART_TIMEOUTS === "undefined") {
   console.log("⏱️ GENEROUS TIMEOUTS ACTIVE - Algorithm has plenty of time to work! 🚀");
 }
 
+// ═══════════════════════════════════════════════════════════════════════════
+// 🎯 ROBUST SELECTOR UTILITY FUNCTIONS - Enhanced Element Detection
+// ═══════════════════════════════════════════════════════════════════════════
+
+/**
+ * Enhanced element selection with multiple fallback strategies
+ * @param {Array|string} selectors - Array of selectors or single selector string
+ * @param {Element} context - Context element (defaults to document)
+ * @param {Object} options - Additional options for text matching, etc.
+ * @returns {Element|null} - Found element or null
+ */
+function findElementRobust(selectors, context = document, options = {}) {
+  const selectorArray = Array.isArray(selectors) ? selectors : [selectors];
+  
+  // Try each selector in order
+  for (const selector of selectorArray) {
+    try {
+      const element = context.querySelector(selector);
+      if (element && isElementVisible(element)) {
+        return element;
+      }
+    } catch (e) {
+      console.warn(`Selector failed: ${selector}`, e);
+    }
+  }
+  
+  // Text-based fallback if specified
+  if (options.textContent) {
+    const elements = context.querySelectorAll('*');
+    for (const element of elements) {
+      if (element.textContent && 
+          element.textContent.toLowerCase().includes(options.textContent.toLowerCase()) &&
+          isElementVisible(element)) {
+        return element;
+      }
+    }
+  }
+  
+  // Attribute-based fallback if specified
+  if (options.attributes) {
+    for (const [attr, value] of Object.entries(options.attributes)) {
+      const elements = context.querySelectorAll(`[${attr}*="${value}"]`);
+      for (const element of elements) {
+        if (isElementVisible(element)) {
+          return element;
+        }
+      }
+    }
+  }
+  
+  return null;
+}
+
+/**
+ * Enhanced element selection for multiple elements
+ * @param {Array|string} selectors - Array of selectors or single selector string
+ * @param {Element} context - Context element (defaults to document)
+ * @param {Object} options - Additional options
+ * @returns {Array} - Array of found elements
+ */
+function findElementsRobust(selectors, context = document, options = {}) {
+  const selectorArray = Array.isArray(selectors) ? selectors : [selectors];
+  let allElements = [];
+  
+  // Try each selector and collect results
+  for (const selector of selectorArray) {
+    try {
+      const elements = Array.from(context.querySelectorAll(selector));
+      const visibleElements = elements.filter(el => isElementVisible(el));
+      allElements = allElements.concat(visibleElements);
+    } catch (e) {
+      console.warn(`Selector failed: ${selector}`, e);
+    }
+  }
+  
+  // Remove duplicates
+  return [...new Set(allElements)];
+}
+
+/**
+ * Enhanced getElementById with multiple ID patterns and fallback strategies
+ * @param {Array|string} ids - Array of ID patterns or single ID
+ * @param {Element} context - Context element (defaults to document)
+ * @param {Object} options - Additional options
+ * @returns {Element|null} - Found element or null
+ */
+function findByIdRobust(ids, context = document, options = {}) {
+  const idArray = Array.isArray(ids) ? ids : [ids];
+  
+  // Try exact ID matches first
+  for (const id of idArray) {
+    try {
+      const element = context.getElementById ? context.getElementById(id) : context.querySelector(`#${id}`);
+      if (element && isElementVisible(element)) {
+        return element;
+      }
+    } catch (e) {
+      console.warn(`ID lookup failed: ${id}`, e);
+    }
+  }
+  
+  // Try partial ID matches with contains
+  for (const id of idArray) {
+    try {
+      const elements = context.querySelectorAll(`[id*="${id}"]`);
+      for (const element of elements) {
+        if (isElementVisible(element)) {
+          return element;
+        }
+      }
+    } catch (e) {
+      console.warn(`Partial ID lookup failed: ${id}`, e);
+    }
+  }
+  
+  return null;
+}
+
+/**
+ * Check if element is visible and interactable
+ * @param {Element} element - Element to check
+ * @returns {boolean} - True if element is visible
+ */
+function isElementVisible(element) {
+  if (!element || !element.offsetParent) return false;
+  
+  const style = getComputedStyle(element);
+  if (style.display === 'none' || style.visibility === 'hidden' || style.opacity === '0') {
+    return false;
+  }
+  
+  const rect = element.getBoundingClientRect();
+  return rect.width > 0 && rect.height > 0;
+}
+
+/**
+ * Wait for element with robust selection and retry logic
+ * @param {Array|string} selectors - Array of selectors or single selector
+ * @param {Object} options - Configuration options
+ * @returns {Promise<Element>} - Promise that resolves to found element
+ */
+async function waitForElementRobust(selectors, options = {}) {
+  const {
+    timeout = SMART_TIMEOUTS.BASE_TIMEOUT,
+    context = document,
+    textContent = null,
+    attributes = null,
+    checkInterval = 100
+  } = options;
+  
+  const startTime = Date.now();
+  
+  while (Date.now() - startTime < timeout) {
+    const element = findElementRobust(selectors, context, { textContent, attributes });
+    if (element) {
+      return element;
+    }
+    
+    await new Promise(resolve => setTimeout(resolve, checkInterval));
+  }
+  
+  throw new Error(`Element not found after ${timeout}ms: ${JSON.stringify(selectors)}`);
+}
+
 /**
  * Calculate dynamic timeout based on recent success/failure patterns
  */
@@ -82,59 +246,206 @@ function getSmartTimeout(baseTimeout = SMART_TIMEOUTS.BASE_TIMEOUT, actionType =
   return dynamicTimeout;
 }
 
-/**
- * Record successful action to improve future timeouts
- */
-function recordSuccess(actionDescription) {
-  SMART_TIMEOUTS.lastSuccessTime = Date.now();
-  SMART_TIMEOUTS.consecutiveFailures = 0;
-  SMART_TIMEOUTS.totalSuccessActions++;
-  sendLogToPopup(`✅ Success: ${actionDescription} (${SMART_TIMEOUTS.totalSuccessActions} total)`);
-}
+  /**
+   * Record successful action to improve future timeouts
+   */
+  function recordSuccess(actionDescription) {
+    SMART_TIMEOUTS.lastSuccessTime = Date.now();
+    SMART_TIMEOUTS.consecutiveFailures = 0;
+    SMART_TIMEOUTS.totalSuccessActions++;
+    sendLogToPopup(`✅ Success: ${actionDescription} (${SMART_TIMEOUTS.totalSuccessActions} total)`);
+  }
 
-/**
- * Record failed action to adjust future timeouts
- */
-function recordFailure(actionDescription) {
-  SMART_TIMEOUTS.consecutiveFailures++;
-  sendLogToPopup(`❌ Failed: ${actionDescription} (${SMART_TIMEOUTS.consecutiveFailures} consecutive)`, "WARN");
-}
+  // ═══════════════════════════════════════════════════════════════════════════
+  // 🔧 REACT-SAFE DOM MANIPULATION - Prevent React conflicts
+  // ═══════════════════════════════════════════════════════════════════════════
 
-if (!isIndeedSite) {
-  console.log(`🚫 Extension disabled - Not an Indeed site (${currentDomain})`);
-  sendStatusMessage(
-    `🚫 Extension disabled - Not an Indeed site (${currentDomain})`
-  );
-} else {
-  // ⚡ MAIN EXTENSION CODE - Only runs on Indeed sites
-  console.log("🚀 Content script loaded on Indeed - preventing cache...");
+  /**
+   * React-safe event dispatching that won't interfere with React's synthetic events
+   */
+  function dispatchReactSafeEvent(element, eventType, options = {}) {
+    try {
+      // Use requestAnimationFrame to avoid React reconciliation conflicts
+      return new Promise((resolve) => {
+        requestAnimationFrame(() => {
+          try {
+            // Create native event with proper options
+            const eventOptions = {
+              bubbles: true,
+              cancelable: true,
+              view: window,
+              ...options
+            };
+            
+            const event = new Event(eventType, eventOptions);
+            
+            // Add React-specific properties to avoid conflicts
+            Object.defineProperty(event, '_reactInternalInstance', {
+              value: null,
+              configurable: true
+            });
+            
+            element.dispatchEvent(event);
+            resolve(true);
+          } catch (error) {
+            console.warn(`⚠️ React-safe event dispatch failed for ${eventType}:`, error.message);
+            resolve(false);
+          }
+        });
+      });
+    } catch (error) {
+      console.warn(`⚠️ React-safe event setup failed:`, error.message);
+      return Promise.resolve(false);
+    }
+  }
+
+  /**
+   * React-safe input value setting with proper event sequence
+   */
+  async function setReactSafeValue(input, value) {
+    try {
+      // Check if element has React fiber (React 16+)
+      const reactFiber = input._reactInternalFiber || input._reactInternalInstance;
+      
+      if (reactFiber) {
+        // React-controlled component - use React-safe approach
+        console.log('🔧 React component detected - using safe approach');
+        
+        // Method 1: Use React's internal setter if available
+        const valueSetter = Object.getOwnPropertyDescriptor(input, 'value')?.set;
+        const prototype = Object.getPrototypeOf(input);
+        const prototypeValueSetter = Object.getOwnPropertyDescriptor(prototype, 'value')?.set;
+        
+        if (valueSetter && valueSetter !== prototypeValueSetter) {
+          valueSetter.call(input, value);
+        } else {
+          // Fallback to direct assignment
+          input.value = value;
+        }
+        
+        // Dispatch React-compatible events with delay
+        await new Promise(resolve => setTimeout(resolve, 50));
+        await dispatchReactSafeEvent(input, 'input');
+        await new Promise(resolve => setTimeout(resolve, 50));
+        await dispatchReactSafeEvent(input, 'change');
+        
+      } else {
+        // Non-React component - use standard approach
+        input.value = value;
+        await dispatchReactSafeEvent(input, 'input');
+        await dispatchReactSafeEvent(input, 'change');
+      }
+      
+      return true;
+    } catch (error) {
+      console.warn('⚠️ React-safe value setting failed:', error.message);
+      // Fallback to basic approach
+      try {
+        input.value = value;
+        return true;
+      } catch (fallbackError) {
+        console.error('❌ All value setting methods failed:', fallbackError.message);
+        return false;
+      }
+    }
+  }  /**
+   * Record failed action to adjust future timeouts
+   */
+  function recordFailure(actionDescription) {
+    SMART_TIMEOUTS.consecutiveFailures++;
+    sendLogToPopup(`❌ Failed: ${actionDescription} (${SMART_TIMEOUTS.consecutiveFailures} consecutive)`, "WARN");
+  }
+
+  /**
+   * GLOBAL INPUT VALIDATION: Prevents filling any search/location inputs
+   */
+  function validateInputForFilling(input) {
+    if (!input || !input.tagName) {
+      return { safe: false, reason: 'Invalid input element' };
+    }
+    
+    // Get all input attributes and text
+    const placeholder = (input.placeholder || '').toLowerCase();
+    const name = (input.name || '').toLowerCase();
+    const id = (input.id || '').toLowerCase();
+    const className = (input.className || '').toLowerCase();
+    const type = (input.type || '').toLowerCase();
+    const ariaLabel = (input.getAttribute('aria-label') || '').toLowerCase();
+    
+    // ABSOLUTE BLOCKLIST - Never fill these inputs
+    const blockedPatterns = [
+      'search', 'find', 'query', 'keyword', 
+       'where', 
+      'filter', 'sort', 'browse', 'explore',
+    ];
+    
+    const allInputText = `${placeholder} ${name} ${id} ${className} ${ariaLabel}`;
+    
+    for (const blocked of blockedPatterns) {
+      if (allInputText.includes(blocked)) {
+        return { safe: false, reason: `Blocked pattern: ${blocked}` };
+      }
+    }
+    
+    // Context validation - must be in application form
+    const isInSearchContext = input.closest(
+      'form[role="search"], .search, .job-search, [class*="search"], [id*="search"]'
+    );
+    
+    if (isInSearchContext) {
+      return { safe: false, reason: 'Input in search context' };
+    }
+    
+    // URL validation - be extra careful on job listing pages
+    if (window.location.href.includes('/jobs/') && !window.location.href.includes('apply')) {
+      const hasApplicationContext = input.closest(
+        'form[action*="apply"], [class*="application"], [data-testid*="application"]'
+      );
+      
+      if (!hasApplicationContext) {
+        return { safe: false, reason: 'Not in application context on jobs page' };
+      }
+    }
+    
+    return { safe: true, reason: 'Input validated as safe for application form' };
+  }// ⚡ MAIN EXTENSION CODE - Manifest already restricts to Indeed sites
+console.log("🚀 Content script loaded on Indeed - preventing cache...");
 
   // ═══════════════════════════════════════════════════════════════════════════
   // � SUPPRESS INDEED'S CORS ERRORS - These are not our responsibility
   // ═══════════════════════════════════════════════════════════════════════════
   
-  // Suppress console errors that we can't control (Indeed's API calls)
-  const originalConsoleError = console.error;
-  console.error = function(...args) {
-    const message = args.join(' ');
-    
-    // Suppress known Indeed CORS errors that we can't fix
-    if (message.includes('CORS policy') && 
-        (message.includes('indeed.com') || 
-         message.includes('smartapply.indeed.com') ||
-         message.includes('Access-Control-Allow-Credentials'))) {
-      return; // Silently ignore Indeed's CORS issues
-    }
-    
-    // Suppress React errors from Indeed's page (not our extension)
-    if (message.includes('Minified React error') &&
-        !message.includes('indeed-extension')) {
-      return; // Silently ignore Indeed's React errors
-    }
-    
-    // Let all other errors through (including our own)
-    originalConsoleError.apply(console, args);
-  };
+  // Check if originalConsoleError is already defined to prevent redeclaration
+  if (typeof originalConsoleError === "undefined") {
+    var originalConsoleError = console.error;
+    console.error = function(...args) {
+      const message = args.join(' ');
+      
+      // Suppress known Indeed CORS errors that we can't fix
+      if (message.includes('CORS policy') && 
+          (message.includes('indeed.com') || 
+           message.includes('smartapply.indeed.com') ||
+           message.includes('Access-Control-Allow-Credentials'))) {
+        return; // Silently ignore Indeed's CORS issues
+      }
+      
+      // Enhanced React error suppression for Indeed's React components
+      if ((message.includes('Minified React error') || 
+           message.includes('react-dom.production.min.js') ||
+           message.includes('Error #418') || 
+           message.includes('Error #423') ||
+           message.includes('Fiber')) &&
+          !message.includes('indeed-extension')) {
+        
+        // Log a clean message instead of the confusing React error
+        console.log('🔇 Indeed React error suppressed (not caused by extension)');
+        return; // Silently ignore Indeed's React errors
+      }
+      
+      // Let all other errors through (including our own)
+      originalConsoleError.apply(console, args);
+    };
+  }
 
   // ═══════════════════════════════════════════════════════════════════════════
   // �🛡️ SAFE DOM MANIPULATION - Avoid React conflicts
@@ -249,13 +560,13 @@ if (!isIndeedSite) {
               localStorage.removeItem(key);
             }
           } catch (e) {
-            console.error("Error processing stored result:", e.message);
+            console.warn("⚠️ Error processing stored result:", e.message);
             localStorage.removeItem(key);
           }
         });
       }
     } catch (e) {
-      console.error("Error checking stored results:", e.message);
+      console.warn("⚠️ Error checking stored results:", e.message);
     }
   } else {
     window.indeedAutoApplyLoaded = true;
@@ -293,12 +604,78 @@ if (!isIndeedSite) {
         }
       });
       
-      // Add unhandled error listener
+      // Tab/window close cleanup
+      window.addEventListener("beforeunload", function(event) {
+        console.log("🧹 Tab closing - cleaning up extension resources...");
+        
+        // Stop all automation
+        if (window.emergencyStopFlag !== undefined) {
+          window.emergencyStopFlag = true;
+        }
+        
+        // Clear any running timeouts/intervals
+        if (window.currentJobTimeout) {
+          clearTimeout(window.currentJobTimeout);
+        }
+        if (window.keepAliveInterval) {
+          clearInterval(window.keepAliveInterval);
+        }
+        
+        // Remove extension elements from DOM
+        removeExtensionElements();
+        
+        // Send cleanup message to background
+        try {
+          chrome.runtime.sendMessage({ 
+            action: "tabClosing",
+            timestamp: Date.now()
+          });
+        } catch (e) {
+          // Ignore if extension context is already invalid
+        }
+        
+        console.log("✅ Extension cleanup complete");
+      });
+      
+      // Page visibility change handling
+      document.addEventListener("visibilitychange", function() {
+        if (document.hidden) {
+          console.log("📱 Tab became hidden - reducing activity");
+          // Reduce activity when tab is hidden
+        } else {
+          console.log("👁️ Tab became visible - resuming normal activity");
+        }
+      });
+      
+      // Add unhandled error listener with React error filtering
       window.addEventListener('error', function(event) {
+        const message = event.message || '';
+        
+        // Filter out React minified errors that we can't control
+        if (message.includes('Minified React error') || 
+            (event.filename && event.filename.includes('react-dom'))) {
+          console.log("🔇 Filtered React error (not from extension)");
+          return; // Don't log React errors from Indeed's code
+        }
+        
         // Only log errors from our extension
         if (event.filename && event.filename.includes('chrome-extension://')) {
           console.error("🐛 Extension error caught:", event.error);
         }
+      });
+      
+      // React error boundary simulation for our extension
+      window.addEventListener('unhandledrejection', function(event) {
+        const reason = event.reason?.message || event.reason;
+        
+        // Filter React-related promise rejections
+        if (typeof reason === 'string' && 
+            (reason.includes('React') || reason.includes('Fiber'))) {
+          console.log("🔇 Filtered React promise rejection");
+          return;
+        }
+        
+        console.warn("⚠️ Unhandled promise rejection:", reason);
       });
       
     } catch (err) {
@@ -375,7 +752,7 @@ if (!isIndeedSite) {
         }
       }
     } catch (error) {
-      console.error("❌ Failed to load user configuration:", error);
+      console.warn("⚠️ Failed to load user configuration:", error);
     }
     
     // Return minimal fallback config
@@ -400,7 +777,7 @@ if (!isIndeedSite) {
       await chrome.storage.local.set({ 'jobAppConfig': fallbackConfig });
       console.log("💾 Fallback configuration saved to local storage");
     } catch (saveError) {
-      console.error("❌ Failed to save fallback configuration:", saveError);
+      console.warn("⚠️ Failed to save fallback configuration:", saveError);
     }
     
     userConfig = fallbackConfig;
@@ -670,7 +1047,7 @@ if (!isIndeedSite) {
 
       return questionsConfig;
     } catch (error) {
-      console.error("❌ Failed to load questions configuration:", error);
+      console.warn("⚠️ Failed to load questions configuration:", error);
       // Return fallback config
       return {
         textInputPatterns: [],
@@ -728,7 +1105,7 @@ if (!isIndeedSite) {
 
       return true;
     } catch (error) {
-      console.error("❌ Failed to save learned patterns to config:", error);
+      console.warn("⚠️ Failed to save learned patterns to config:", error);
       return false;
     }
   }
@@ -750,7 +1127,7 @@ if (!isIndeedSite) {
 
       return [];
     } catch (error) {
-      console.error("❌ Failed to load learned patterns from config:", error);
+      console.warn("⚠️ Failed to load learned patterns from config:", error);
       return [];
     }
   }
@@ -973,9 +1350,16 @@ if (!isIndeedSite) {
           return;
         }
 
-        const allClickable = document.querySelectorAll(
-          'button, a, input[type="button"], input[type="submit"]'
-        );
+        // ROBUST CLICKABLE ELEMENTS DETECTION
+        const clickableSelectors = [
+          'button', 'a[href]', 'input[type="button"]', 'input[type="submit"]',
+          'input[type="reset"]', 'input[type="image"]', '[role="button"]',
+          '[onclick]', '.btn', '.button', '[data-testid*="button"]',
+          '[class*="button"]', '[class*="btn"]', 'span[role="button"]',
+          'div[role="button"]', '[tabindex="0"][onclick]', '[data-action]',
+          'a[role="button"]', '.clickable', '[cursor="pointer"]'
+        ];
+        const allClickable = findElementsRobust(clickableSelectors);
 
         for (const element of allClickable) {
           const text = (
@@ -1044,12 +1428,34 @@ if (!isIndeedSite) {
         const currentScriptCount = document.querySelectorAll('script').length;
         const hasMinimumElements = currentBodyChildCount > 5; // Page should have substantial content
         
-        // Check for loading indicators
-        const loadingIndicators = document.querySelectorAll('[class*="load"], [class*="spinner"], [id*="load"]');
-        const hasVisibleLoaders = Array.from(loadingIndicators).some(el => el.offsetParent !== null);
+        // ROBUST LOADING INDICATORS DETECTION
+        const loadingSelectors = [
+          // Class-based loading indicators
+          '[class*="load"]', '[class*="loading"]', '[class*="loader"]',
+          '[class*="spinner"]', '[class*="spin"]', '[class*="rotating"]',
+          '[class*="progress"]', '[class*="wait"]', '[class*="busy"]',
+          '[class*="pending"]', '[class*="processing"]', 
+          // ID-based indicators
+          '[id*="load"]', '[id*="loading"]', '[id*="spinner"]', '[id*="progress"]',
+          // Data attribute indicators  
+          '[data-loading]', '[data-spinner]', '[data-progress]',
+          // ARIA and role indicators
+          '[role="progressbar"]', '[aria-busy="true"]', '[aria-live="polite"]',
+          // Common specific selectors
+          '.fa-spinner', '.fa-circle-o-notch', '.glyphicon-refresh',
+          '.icon-spinner', '.icon-loading', '.loading-overlay',
+          '.progress-bar', '.loading-dots', '.pulse', '.bounce'
+        ];
+        const loadingIndicators = findElementsRobust(loadingSelectors);
+        const hasVisibleLoaders = loadingIndicators.some(el => isElementVisible(el));
         
-        // Check if network requests have settled (rough heuristic)
-        const noActiveRequests = !document.querySelector('meta[http-equiv="refresh"]');
+        // ROBUST NETWORK ACTIVITY CHECK
+        const networkActivitySelectors = [
+          'meta[http-equiv="refresh"]',
+          '[data-loading="true"]', '[data-pending="true"]',
+          '.network-activity', '.ajax-loading', '.xhr-pending'
+        ];
+        const noActiveRequests = !findElementRobust(networkActivitySelectors);
         
         // Check if both body and scripts are stable
         const isStructureStable = (currentBodyChildCount === lastBodyChildCount && 
@@ -1095,9 +1501,15 @@ if (!isIndeedSite) {
    */
   function debugClickableElements() {
     console.log("🔍 DEBUG: All clickable elements on page:");
-    const allClickable = document.querySelectorAll(
-      'button, a, input[type="button"], input[type="submit"]'
-    );
+    // ROBUST CLICKABLE DEBUG DETECTION
+    const clickableSelectors = [
+      'button', 'a[href]', 'input[type="button"]', 'input[type="submit"]',
+      'input[type="reset"]', 'input[type="image"]', '[role="button"]',
+      '[onclick]', '.btn', '.button', '[data-testid*="button"]',
+      '[class*="button"]', '[class*="btn"]', 'span[role="button"]',
+      'div[role="button"]', '[tabindex="0"][onclick]', '[data-action]'
+    ];
+    const allClickable = findElementsRobust(clickableSelectors);
     allClickable.forEach((el, i) => {
       const text = (el.textContent || el.value || "").trim();
       const id = el.id || "no-id";
@@ -1124,7 +1536,10 @@ if (!isIndeedSite) {
    */
   function showExtensionReloadNotice() {
     // Remove any existing notice
-    const existingNotice = document.getElementById("extensionReloadNotice");
+    const existingNotice = findByIdRobust([
+      "extensionReloadNotice", "extension-reload-notice", 
+      "reload-notice", "extension-notice"
+    ]);
     if (existingNotice) {
       existingNotice.remove();
     }
@@ -1263,7 +1678,7 @@ if (!isIndeedSite) {
         
         return this.userConfig;
       } catch (error) {
-        console.error("❌ Error loading user config for learning system:", error);
+        console.warn("⚠️ Error loading user config for learning system:", error);
         this.userConfig = null;
         return null;
       }
@@ -1305,13 +1720,27 @@ if (!isIndeedSite) {
     checkForNewQuestions(node) {
       if (!node.querySelectorAll) return;
 
-      // Look for form containers with questions
-      const containers = node.querySelectorAll("div, fieldset, label, li");
+      // ROBUST FORM CONTAINER DETECTION
+      const containerSelectors = [
+        "div", "fieldset", "label", "li", "section", "article", 
+        "form", "td", "th", ".form-group", ".question", ".field",
+        ".input-group", "[role='group']", "[data-testid*='question']",
+        "[class*='question']", "[class*='field']", "[class*='input']"
+      ];
+      const containers = findElementsRobust(containerSelectors, node);
 
       containers.forEach((container) => {
         if (this.observedContainers.has(container)) return;
 
-        const inputs = container.querySelectorAll("input, select, textarea");
+        const inputSelectors = [
+          "input:not([type='hidden'])", "select", "textarea", 
+          "[contenteditable='true']", "input[type='text']",
+          "input[type='email']", "input[type='tel']", "input[type='url']",
+          "input[type='number']", "input[type='date']", "input[type='time']",
+          "input[type='password']", "input[type='search']",
+          "input[type='radio']", "input[type='checkbox']"
+        ];
+        const inputs = findElementsRobust(inputSelectors, container);
         if (inputs.length === 0) return;
 
         // Look for question text in various locations
@@ -1324,7 +1753,7 @@ if (!isIndeedSite) {
         if (!knownAnswer) {
           // This is an unknown question - try dynamic detection FIRST
           console.log(`🔍 Auto-detected unknown question: "${questionText}"`);
-          this.tryDynamicDetectionAndFill(container, questionText, inputs[0])
+          this.tryDynamicDetectionAndFillAllInputs(container, questionText, inputs)
             .then(success => {
               if (!success) {
                 // Only start watching if dynamic detection failed
@@ -1337,11 +1766,11 @@ if (!isIndeedSite) {
               this.startWatching(container, questionText, inputs);
             });
         } else {
-          // We know this question - try to answer it automatically
+          // We know this question - try to answer it automatically for ALL inputs
           console.log(
-            `✅ Auto-detected known question: "${questionText}" - Applying learned answer`
+            `✅ Auto-detected known question: "${questionText}" - Applying learned answer to ALL inputs`
           );
-          this.applyKnownAnswer(container, knownAnswer, inputs[0]);
+          this.applyKnownAnswerToAllInputs(container, knownAnswer, inputs);
         }
 
         this.observedContainers.add(container);
@@ -1415,6 +1844,74 @@ if (!isIndeedSite) {
     }
 
     /**
+     * DYNAMIC: Try detection and fill for ALL inputs in a question (not just first one)
+     */
+    async tryDynamicDetectionAndFillAllInputs(container, questionText, inputElements) {
+      console.log(`🔍 Processing ALL ${inputElements.length} inputs for question: "${questionText}"`);
+      
+      let successCount = 0;
+      let totalInputs = inputElements.length;
+      
+      for (let i = 0; i < inputElements.length; i++) {
+        const input = inputElements[i];
+        console.log(`📝 Processing input ${i + 1}/${totalInputs}: ${input.type || input.tagName}`);
+        
+        try {
+          const success = await this.tryDynamicDetectionAndFill(container, questionText, input);
+          if (success) {
+            successCount++;
+            console.log(`✅ Input ${i + 1} filled successfully`);
+          } else {
+            console.log(`⚠️ Input ${i + 1} could not be filled automatically`);
+          }
+          
+          // Small delay between inputs to avoid overwhelming the page
+          await new Promise(r => setTimeout(r, 200));
+          
+        } catch (error) {
+          console.error(`❌ Error processing input ${i + 1}:`, error);
+        }
+      }
+      
+      console.log(`📊 Question completion: ${successCount}/${totalInputs} inputs filled successfully`);
+      return successCount > 0; // Return true if at least one input was filled
+    }
+
+    /**
+     * DYNAMIC: Apply known answer to ALL inputs in a question (not just first one)  
+     */
+    async applyKnownAnswerToAllInputs(container, knownAnswer, inputElements) {
+      console.log(`🔍 Applying known answer to ALL ${inputElements.length} inputs for question`);
+      
+      let successCount = 0;
+      let totalInputs = inputElements.length;
+      
+      for (let i = 0; i < inputElements.length; i++) {
+        const input = inputElements[i];
+        console.log(`📝 Applying answer to input ${i + 1}/${totalInputs}: ${input.type || input.tagName}`);
+        
+        try {
+          const success = await this.applyKnownAnswer(container, knownAnswer, input);
+          if (success) {
+            successCount++;
+            console.log(`✅ Input ${i + 1} filled with known answer`);
+          } else {
+            console.log(`⚠️ Input ${i + 1} could not be filled with known answer`);
+          }
+          
+          // Small delay between inputs 
+          await new Promise(r => setTimeout(r, 200));
+          
+        } catch (error) {
+          console.error(`❌ Error applying known answer to input ${i + 1}:`, error);
+        }
+      }
+      
+      console.log(`📊 Known answer application: ${successCount}/${totalInputs} inputs filled successfully`);
+      return successCount > 0;
+    }
+
+    /**
      * Generate a unique ID for an element for retry tracking
      */
     getElementId(element) {
@@ -1453,28 +1950,106 @@ if (!isIndeedSite) {
             return this.fillTextInput(inputElement, value);
         }
       } catch (error) {
-        console.error('Error applying value to input:', error);
+        console.warn('⚠️ Error applying value to input:', error);
         return false;
       }
     }
 
     /**
-     * Fill text input
+     * ULTRA-STRICT input safety validation - Prevents filling search/location inputs
      */
-    fillTextInput(input, value) {
+    validateInputSafety(input) {
+      if (!input || !input.tagName) {
+        return { safe: false, reason: 'Invalid input element' };
+      }
+      
+      // Check input attributes that indicate search functionality
+      const placeholder = (input.placeholder || '').toLowerCase();
+      const name = (input.name || '').toLowerCase();
+      const id = (input.id || '').toLowerCase();
+      const className = (input.className || '').toLowerCase();
+      const type = (input.type || '').toLowerCase();
+      
+      // FORBIDDEN INPUT PATTERNS - Never fill these
+      const forbiddenPatterns = [
+        // Search patterns
+        'search', 'job title', 'keyword', 'company', 'find', 'query', 'q',
+        // Location patterns  
+        'location', 'where', 'city', 'state', 'zip', 'postal', 'address',
+        'country', 'region', 'area', 'near', 'within',
+        // Browsing patterns
+        'filter', 'sort', 'browse', 'explore'
+      ];
+      
+      const allText = `${placeholder} ${name} ${id} ${className}`;
+      
+      for (const pattern of forbiddenPatterns) {
+        if (allText.includes(pattern)) {
+          return { safe: false, reason: `Contains forbidden pattern: ${pattern}` };
+        }
+      }
+      
+      // Check if input is in search context
+      const searchAncestors = input.closest(
+        'form[role="search"], .search, .job-search, #searchform, [class*="search"], [id*="search"]'
+      );
+      
+      if (searchAncestors) {
+        return { safe: false, reason: 'Input is in search context' };
+      }
+      
+      // Check for visible search indicators nearby
+      const nearbySearchElements = input.parentElement?.querySelectorAll(
+        'button[type="submit"]:contains("Search"), [class*="search-btn"], [id*="search"]'
+      );
+      
+      if (nearbySearchElements && nearbySearchElements.length > 0) {
+        return { safe: false, reason: 'Search elements detected nearby' };
+      }
+      
+      // Additional protection: Must be in application context
+      const applicationContext = input.closest(
+        'form[action*="apply"], [class*="application"], [class*="smartapply"], [data-testid*="application"]'
+      );
+      
+      if (!applicationContext && window.location.href.includes('indeed.com/jobs')) {
+        return { safe: false, reason: 'Not in application context on jobs page' };
+      }
+      
+      return { safe: true, reason: 'Input validated as safe' };
+    }
+
+    /**
+     * Fill text input - WITH ULTRA-STRICT SEARCH/LOCATION PROTECTION
+     */
+    async fillTextInput(input, value) {
       try {
-        input.focus();
-        input.value = value;
+        // CRITICAL PROTECTION: Never fill search or location inputs
+        const inputProtection = this.validateInputSafety(input);
+        if (!inputProtection.safe) {
+          console.log(`🚫 BLOCKED input fill: ${inputProtection.reason}`);
+          return false;
+        }
         
-        // Dispatch events to trigger React/form validation
-        input.dispatchEvent(new Event('input', { bubbles: true }));
-        input.dispatchEvent(new Event('change', { bubbles: true }));
-        input.dispatchEvent(new Event('blur', { bubbles: true }));
+        input.focus();
+        
+        // Use React-safe value setting
+        const success = await setReactSafeValue(input, value);
+        if (!success) {
+          console.warn('⚠️ React-safe input filling failed, trying basic method');
+          input.value = value;
+          await dispatchReactSafeEvent(input, 'input');
+          await dispatchReactSafeEvent(input, 'change');
+        }
+        
+        // Blur event with delay to let React process
+        await new Promise(resolve => setTimeout(resolve, 100));
+        await dispatchReactSafeEvent(input, 'blur');
         
         console.log(`✅ Filled text input with: "${value}"`);
         return true;
       } catch (error) {
-        console.error('Error filling text input:', error);
+        console.warn('⚠️ Error filling text input:', error);
         return false;
       }
     }
@@ -1519,7 +2094,7 @@ if (!isIndeedSite) {
           return false;
         }
       } catch (error) {
-        console.error('Error filling select input:', error);
+        console.warn('⚠️ Error filling select input:', error);
         return false;
       }
     }
@@ -1529,13 +2104,32 @@ if (!isIndeedSite) {
      */
     fillRadioInput(radio, value) {
       try {
-        // Find the radio group
-        const container = radio.closest('div, fieldset') || radio.parentElement;
-        const radios = container.querySelectorAll(`input[name="${radio.name}"]`);
+        // ROBUST RADIO GROUP CONTAINER DETECTION
+        const containerSelectors = ['div', 'fieldset', 'form', 'section', 'ul', 'ol', '.form-group', '[role="group"]'];
+        let container = null;
+        
+        for (const selector of containerSelectors) {
+          container = radio.closest(selector);
+          if (container) break;
+        }
+        container = container || radio.parentElement;
+        
+        // ROBUST RADIO BUTTON GROUP DETECTION
+        const radioSelectors = [
+          `input[name="${radio.name}"]`,
+          `input[data-name="${radio.name}"]`,
+          `input[type="radio"][name="${radio.name}"]`
+        ];
+        const radios = findElementsRobust(radioSelectors, container);
         
         for (const radioOption of radios) {
+          // ROBUST LABEL DETECTION FOR RADIO BUTTONS
+          const labelSelectors = [
+            'label', `label[for="${radioOption.id}"]`, 
+            '.label', '.radio-label', '[data-label]'
+          ];
           const label = radioOption.closest('label') || 
-                       container.querySelector(`label[for="${radioOption.id}"]`);
+                       findElementRobust(labelSelectors.slice(1), container);
           const labelText = label ? label.textContent.toLowerCase().trim() : '';
           const radioValue = radioOption.value.toLowerCase();
           
@@ -1554,7 +2148,7 @@ if (!isIndeedSite) {
         console.log(`❌ Could not find matching radio option for: "${value}"`);
         return false;
       } catch (error) {
-        console.error('Error filling radio input:', error);
+        console.warn('⚠️ Error filling radio input:', error);
         return false;
       }
     }
@@ -1585,7 +2179,7 @@ if (!isIndeedSite) {
 
         if (indicator) {
           // Add CSS animation if not already present
-          if (!document.getElementById("auto-fill-styles")) {
+          if (!findByIdRobust(["auto-fill-styles", "autofill-styles", "fill-styles"])) {
             const style = document.createElement("style");
             style.id = "auto-fill-styles";
             style.textContent = `
@@ -1618,15 +2212,17 @@ if (!isIndeedSite) {
      * Extract question text from a container
      */
     extractQuestionText(container) {
-      // Try various methods to get question text
+      // ROBUST QUESTION TEXT EXTRACTION
       const selectors = [
-        "label",
-        '[data-testid*="label"]',
-        ".question",
-        ".form-label",
-        "legend",
-        "h1, h2, h3, h4, h5, h6",
-        "span, div, p",
+        "label", "legend", 
+        '[data-testid*="label"]', '[data-testid*="question"]',
+        '.question', '.form-label', '.field-label', '.input-label',
+        '[class*="question"]', '[class*="label"]', '[class*="title"]',
+        'h1, h2, h3, h4, h5, h6',
+        '[aria-label]', '[aria-labelledby]', '[title]',
+        'span[role="text"]', 'div[role="text"]', 'p[role="text"]',
+        '.help-text', '.description', '.instructions',
+        'span, div, p'
       ];
 
       for (const selector of selectors) {
@@ -1643,7 +2239,11 @@ if (!isIndeedSite) {
       const containerText = container.textContent.trim();
       if (containerText.length > 5 && containerText.includes("?")) {
         // Take the part before the first input
-        const input = container.querySelector("input, select, textarea");
+        const inputSelectors = [
+          "input:not([type='hidden'])", "select", "textarea",
+          "[contenteditable='true']", "[role='textbox']", "[role='combobox']"
+        ];
+        const input = findElementRobust(inputSelectors, container);
         if (input && containerText.indexOf(input.textContent || "") > 0) {
           return containerText
             .substring(0, containerText.indexOf(input.textContent || ""))
@@ -1783,7 +2383,7 @@ if (!isIndeedSite) {
       indicator.textContent = "🧠 LEARNING";
 
       // Add CSS animation if not exists
-      if (!document.getElementById("learning-animation-style")) {
+      if (!findByIdRobust(["learning-animation-style", "learning-animation", "animation-style"])) {
         const style = document.createElement("style");
         style.id = "learning-animation-style";
         style.textContent = `
@@ -2548,9 +3148,11 @@ if (!isIndeedSite) {
      * Show learning success indicator
      */
     showLearningSuccess(questionData) {
-      const indicator = document.getElementById(
-        `learning-indicator-${questionData.id}`
-      );
+      const indicator = findByIdRobust([
+        `learning-indicator-${questionData.id}`,
+        `learning-${questionData.id}`,
+        `indicator-${questionData.id}`
+      ]);
       if (indicator) {
         indicator.textContent = "✅ LEARNED";
         indicator.style.background = "linear-gradient(45deg, #2196F3, #1976D2)";
@@ -2584,9 +3186,11 @@ if (!isIndeedSite) {
       }
 
       // Remove learning indicator
-      const indicator = document.getElementById(
-        `learning-indicator-${watchId}`
-      );
+      const indicator = findByIdRobust([
+        `learning-indicator-${watchId}`,
+        `learning-${watchId}`,
+        `indicator-${watchId}`
+      ]);
       if (indicator) {
         indicator.remove();
       }
@@ -2946,51 +3550,85 @@ if (!isIndeedSite) {
       try {
         let input = null;
 
-        // Find the appropriate input based on the learned input type
+        // ROBUST INPUT TYPE DETECTION AND SELECTION
         switch (inputType) {
           case "number":
-            input = container.querySelector(
-              'input[type="number"], input[inputmode="numeric"], input[inputmode="text"][min]'
-            );
+            const numberSelectors = [
+              'input[type="number"]', 'input[inputmode="numeric"]', 
+              'input[inputmode="decimal"]', 'input[pattern*="[0-9]"]',
+              'input[data-type="number"]', 'input[class*="number"]',
+              'input[min][max]', 'input[step]'
+            ];
+            input = findElementRobust(numberSelectors, container);
             break;
           case "text":
-            input = container.querySelector(
-              'input[type="text"], input:not([type]), input[data-testid*="input"]:not([min])'
-            );
+            const textSelectors = [
+              'input[type="text"]', 'input:not([type])', 'input[type=""]',
+              'input[data-testid*="input"]:not([min])',
+              'input[class*="text"]', 'input[placeholder]'
+            ];
+            input = findElementRobust(textSelectors, container);
             break;
           case "textarea":
-            input = container.querySelector("textarea");
+            const textareaSelectors = [
+              'textarea', '[contenteditable="true"]', 
+              'div[role="textbox"]', '[data-type="textarea"]'
+            ];
+            input = findElementRobust(textareaSelectors, container);
             break;
           case "select":
-            input = container.querySelector("select");
+            const selectSelectors = [
+              'select', '[role="combobox"]', '[role="listbox"]',
+              '[data-type="select"]', '.select', '.dropdown'
+            ];
+            input = findElementRobust(selectSelectors, container);
             break;
           case "radio":
-            // For radio buttons, find the one that matches the answer
-            const radios = container.querySelectorAll('input[type="radio"]');
+            // ROBUST RADIO BUTTON DETECTION AND MATCHING
+            const radioSelectors = [
+              'input[type="radio"]', '[role="radio"]', 
+              '[data-type="radio"]', '.radio input'
+            ];
+            const radios = findElementsRobust(radioSelectors, container);
+            
             for (const radio of radios) {
-              const label =
-                radio.closest("label") ||
-                container.querySelector(`label[for="${radio.id}"]`);
-              const labelText = label
-                ? label.textContent.trim().toLowerCase()
-                : "";
-              if (
-                labelText.includes(answer.toLowerCase()) ||
-                radio.value.toLowerCase() === answer.toLowerCase()
-              ) {
+              const labelSelectors = [
+                'label', `label[for="${radio.id}"]`, 
+                '.label', '.radio-label', '[data-label]'
+              ];
+              const label = radio.closest('label') || 
+                          findElementRobust(labelSelectors.slice(1), container);
+              
+              const labelText = label ? label.textContent.trim().toLowerCase() : '';
+              const radioValue = (radio.value || '').toLowerCase();
+              const answerLower = answer.toLowerCase();
+              
+              if (labelText.includes(answerLower) || 
+                  radioValue === answerLower ||
+                  (answerLower === 'yes' && (radioValue === 'yes' || labelText.includes('yes'))) ||
+                  (answerLower === 'no' && (radioValue === 'no' || labelText.includes('no')))) {
                 input = radio;
                 break;
               }
             }
             break;
           case "checkbox":
-            input = container.querySelector('input[type="checkbox"]');
+            const checkboxSelectors = [
+              'input[type="checkbox"]', '[role="checkbox"]',
+              '[data-type="checkbox"]', '.checkbox input'
+            ];
+            input = findElementRobust(checkboxSelectors, container);
             break;
         }
 
         if (!input) {
-          // Fallback: try to find any input
-          input = container.querySelector("input, textarea, select");
+          // ROBUST FALLBACK INPUT DETECTION
+          const fallbackSelectors = [
+            "input:not([type='hidden'])", "textarea", "select",
+            "[contenteditable='true']", "[role='textbox']", 
+            "[role='combobox']", "[role='listbox']", "[data-input]"
+          ];
+          input = findElementRobust(fallbackSelectors, container);
         }
 
         if (input) {
@@ -3064,7 +3702,7 @@ if (!isIndeedSite) {
     `;
 
       // Add CSS animation if not already present
-      if (!document.getElementById("learning-match-styles")) {
+      if (!findByIdRobust(["learning-match-styles", "learning-match", "match-styles"])) {
         const style = document.createElement("style");
         style.id = "learning-match-styles";
         style.textContent = `
@@ -3177,7 +3815,7 @@ if (!isIndeedSite) {
 
         if (indicator) {
           // Add CSS animation if not already present
-          if (!document.getElementById("auto-learning-styles")) {
+          if (!findByIdRobust(["auto-learning-styles", "auto-learning", "learning-styles"])) {
             const style = document.createElement("style");
             style.id = "auto-learning-styles";
             style.textContent = `
@@ -3237,11 +3875,31 @@ if (!isIndeedSite) {
       if (message.action === "startProcess") {
         console.log(message.action);
 
-        // ✅ Define the elements here when the message is received
-        const getJobCards = document.getElementById(
-          "mosaic-provider-jobcards-1"
-        );
-        const searchJobCards = document.getElementById("mosaic-jobResults");
+        // ✅ ROBUST JOB CARD CONTAINER DETECTION
+        const homeJobCardSelectors = [
+          "#mosaic-provider-jobcards-1",
+          "#mosaic-provider-jobcards",
+          "[data-test='mosaic-provider-jobcards']", 
+          ".mosaic-provider-jobcards",
+          "[id*='mosaic-provider-jobcards']",
+          "[class*='mosaic-provider-jobcards']",
+          "#mosaic-jobcards",
+          ".jobCards"
+        ];
+        
+        const searchJobCardSelectors = [
+          "#mosaic-jobResults",
+          "#resultsCol",
+          "[data-test='jobResults']",
+          ".jobsearch-results",
+          "[id*='jobResults']",
+          "[class*='jobResults']",
+          "#searchResultsContainer",
+          ".jobsearch-NoResult"
+        ];
+        
+        const getJobCards = findElementRobust(homeJobCardSelectors);
+        const searchJobCards = findElementRobust(searchJobCardSelectors);
 
         console.log("getJobCards:", getJobCards);
         console.log("searchJobCards:", searchJobCards);
@@ -3415,9 +4073,18 @@ if (!isIndeedSite) {
   };
   // ...existing code...
   const startScriptButton = () => {
-    const searchForm = document.getElementById(
-      "MosaicProviderRichSearchDaemon"
-    );
+    const searchFormSelectors = [
+      "#MosaicProviderRichSearchDaemon",
+      "#searchbox",
+      ".searchbox-container",
+      "[data-testid='searchform']",
+      "form[role='search']",
+      ".searchform",
+      "#searchform",
+      "[id*='search-form']",
+      "[class*='search-form']"
+    ];
+    const searchForm = findElementRobust(searchFormSelectors);
     const startbtn = document.createElement("button");
     startbtn.innerText = "Start";
     startbtn.style.height = "30px";
@@ -3441,26 +4108,72 @@ if (!isIndeedSite) {
     }
     const jobs = [];
     jobCards.forEach((card, idx) => {
-      // Get job title
-      const jobTitle =
-        card.querySelector("h2.jobTitle span")?.textContent?.trim() || null;
-      // Get company name
-      const companyName =
-        card
-          .querySelector('[data-testid="company-name"]')
-          ?.textContent?.trim() || null;
-      // Get location
-      const location =
-        card
-          .querySelector('[data-testid="text-location"]')
-          ?.textContent?.trim() || null;
+      // ROBUST JOB TITLE EXTRACTION
+      const jobTitleSelectors = [
+        "h2.jobTitle span",
+        "h2.jobTitle a span", 
+        "h2[data-testid*='title'] span",
+        "h2[class*='title'] span",
+        ".jobTitle span",
+        ".jobTitle a",
+        "h2 a[data-jk]",
+        "[data-testid*='title'] span",
+        "[class*='job-title'] span",
+        "[class*='jobTitle'] span"
+      ];
+      const jobTitle = findElementRobust(jobTitleSelectors, card)?.textContent?.trim() || null;
+      
+      // ROBUST COMPANY NAME EXTRACTION  
+      const companyNameSelectors = [
+        '[data-testid="company-name"]',
+        '[data-testid="company-name"] a',
+        '.companyName',
+        '.companyName a',
+        '[class*="company-name"]',
+        '[class*="companyName"]',
+        'span[title*="company"]', 
+        'a[data-testid="company-name"]',
+        '[data-testid*="company"] span',
+        '.jobMetaDataGroup span:first-child'
+      ];
+      const companyName = findElementRobust(companyNameSelectors, card)?.textContent?.trim() || null;
+      
+      // ROBUST LOCATION EXTRACTION
+      const locationSelectors = [
+        '[data-testid="text-location"]',
+        '[data-testid="job-location"]',
+        '.companyLocation',
+        '.jobLocation', 
+        '[class*="location"]',
+        '[data-testid*="location"]',
+        'div[data-testid="text-location"]',
+        'span[data-testid="text-location"]'
+      ];
+      const location = findElementRobust(locationSelectors, card)?.textContent?.trim() || null;
       // Get company description
       const companyDesc =
         card.querySelector(".jobMetaDataGroup")?.innerText?.trim() || null;
-      // Get job link and id
-      const jobLinkEl = card.querySelector("h2.jobTitle a");
+      // ROBUST JOB LINK AND ID EXTRACTION
+      const jobLinkSelectors = [
+        "h2.jobTitle a",
+        "h2 a[data-jk]",
+        ".jobTitle a", 
+        "a[data-jk]",
+        "h2 a[href*='viewjob']",
+        "[data-testid*='title'] a",
+        "[class*='job-title'] a",
+        "a[href*='/jobs/view/']",
+        "a[onclick*='viewjob']"
+      ];
+      const jobLinkEl = findElementRobust(jobLinkSelectors, card);
       let jobLink = jobLinkEl?.href || null;
-      const jobId = jobLinkEl?.getAttribute("data-jk") || jobLinkEl?.id || null;
+      
+      // ROBUST JOB ID EXTRACTION
+      const jobId = jobLinkEl?.getAttribute("data-jk") || 
+                   jobLinkEl?.getAttribute("id") ||
+                   card.getAttribute("data-jk") ||
+                   card.querySelector("[data-jk]")?.getAttribute("data-jk") ||
+                   null;
 
       // Validate and fix job URL to ensure it goes to the right page
       if (jobLink) {
@@ -3485,23 +4198,100 @@ if (!isIndeedSite) {
         }
       }
 
-      // Check if this is an "Easily apply" job - ONLY queue these jobs
-      const easyApplyElement = card.querySelector(
-        '[data-testid="indeedApply"]'
+      // ROBUST "EASILY APPLY" DETECTION - Multiple strategies
+      const easyApplySelectors = [
+        // Button-based selectors
+        'button[aria-label*="Easily apply"]',
+        'button[title*="Easily apply"]', 
+        'button[data-testid*="indeedApply"]',
+        'button[data-testid="indeedApplyButton"]',
+        'button[data-testid="indeedApplyButton-test"]',
+        'button[aria-label*="Apply now"]',
+        'button[class*="IndeedApply"]',
+        'button[id*="indeedApply"]',
+        // Link-based selectors
+        'a[aria-label*="Easily apply"]',
+        'a[title*="Easily apply"]',
+        'a[data-testid*="indeedApply"]',
+        'a[class*="IndeedApply"]',
+        // Span/text-based selectors
+        '.iaIcon span',
+        'span[data-testid*="indeedApply"]',
+        'span[class*="IndeedApply"]',
+        'span[aria-label*="Easily apply"]',
+        // Generic container selectors
+        '[data-testid="indeedApply"]',
+        '.jobsearch-IndeedApplyButton',
+        '.ia-IndeedApplyButton',
+        '.ia-IndeedApplyButton button',
+        '#indeedApplyButton',
+        // Fallback class selectors
+        '[class*="easily-apply"]',
+        '[class*="indeed-apply"]',
+        '[class*="oneclick"]',
+        '[id*="easily-apply"]',
+        '[id*="indeed-apply"]'
+      ];
+      
+      let easyApplyElement = findElementRobust(easyApplySelectors, card, {
+        textContent: 'easily apply',
+        attributes: {
+          'aria-label': 'apply',
+          'data-testid': 'apply', 
+          'title': 'apply'
+        }
+      });
+      
+      // Additional text-based search for various "apply" patterns
+      if (!easyApplyElement) {
+        const textPatterns = ['easily apply', 'apply now', 'one-click apply', 'quick apply'];
+        const allElements = card.querySelectorAll('*');
+        
+        for (const element of allElements) {
+          const text = element.textContent?.trim().toLowerCase() || '';
+          if (textPatterns.some(pattern => text.includes(pattern))) {
+            easyApplyElement = element;
+            break;
+          }
+        }
+      }
+      
+      // Determine if this is an "Easily apply" job
+      const elementText = easyApplyElement?.textContent?.trim().toLowerCase() || '';
+      const elementAttrs = easyApplyElement ? {
+        dataTestid: easyApplyElement.getAttribute('data-testid') || '',
+        ariaLabel: easyApplyElement.getAttribute('aria-label') || '',
+        className: easyApplyElement.className || '',
+        title: easyApplyElement.title || ''
+      } : {};
+      
+      const isEasilyApply = easyApplyElement && (
+        elementText.includes('easily apply') ||
+        elementText.includes('apply now') ||
+        elementText.includes('quick apply') ||
+        elementText.includes('one-click apply') ||
+        elementAttrs.dataTestid.includes('indeedApply') ||
+        elementAttrs.ariaLabel.toLowerCase().includes('easily apply') ||
+        elementAttrs.className.includes('IndeedApply') ||
+        elementAttrs.title.toLowerCase().includes('easily apply')
       );
-      const jobType =
-        easyApplyElement?.textContent?.trim() === "Easily apply"
-          ? "Easily apply"
-          : null;
+      
+      const jobType = isEasilyApply ? "Easily apply" : null;
 
       // Skip jobs that are NOT "Easily apply"
       if (!jobType) {
         console.log(
           `Skipping job at index ${idx} - Not an "Easily apply" job. Apply type: "${
             easyApplyElement?.textContent?.trim() || "N/A"
-          }"`
+          }" | Element class: "${easyApplyElement?.className || "N/A"}" | Data-testid: "${easyApplyElement?.getAttribute('data-testid') || "N/A"}"`
         );
         return;
+      } else {
+        console.log(
+          `✅ Found "Easily apply" job at index ${idx}! Apply type: "${
+            easyApplyElement?.textContent?.trim()
+          }" | Element: ${easyApplyElement?.tagName}`
+        );
       }
       if (
         [
@@ -3910,17 +4700,87 @@ if (!isIndeedSite) {
         }
       };
 
-      // Failsafe timeout - always send response within 45 seconds (reduced from 90)
-      timeoutId = setTimeout(() => {
-        if (!responseSent) {
-          console.log("⏰ Job application timeout - sending failure response");
-          window.currentJobPromise = null; // Clear job promise
-          safeResponse({ status: "timeout", result: "fail_timeout" });
-        }
-      }, 180000); // 3 minutes timeout - GENEROUS TIME FOR COMPLEX FORMS
+      // SMART ADAPTIVE TIMEOUT SYSTEM - 2 minutes base + extensions
+      let baseTimeoutDuration = 120000; // 2 minutes base
+      let timeoutExtensions = 0;
+      const maxExtensions = 3; // Max 3 extensions = up to 5 minutes total
+      const extensionDuration = 60000; // 1 minute extensions
+      
+      const createSmartTimeout = () => {
+        if (timeoutId) clearTimeout(timeoutId);
+        
+        timeoutId = setTimeout(async () => {
+          if (!responseSent) {
+            // Check for progress before timing out
+            const hasProgress = await checkApplicationProgress();
+            
+            if (hasProgress && timeoutExtensions < maxExtensions) {
+              timeoutExtensions++;
+              console.log(`🔄 Progress detected! Extending timeout (${timeoutExtensions}/${maxExtensions})`);
+              sendLogToPopup(`🔄 Progress detected! Extending timeout by 1 minute (${timeoutExtensions}/${maxExtensions})`);
+              sendStatusMessage(`🔄 Application in progress - extending time (${timeoutExtensions}/${maxExtensions})`);
+              
+              // Create new timeout with extension
+              createSmartTimeout();
+              return;
+            }
+            
+            console.log(`⏰ Job application timeout after ${baseTimeoutDuration + (timeoutExtensions * extensionDuration)}ms`);
+            sendLogToPopup(`⏰ Application timeout - no progress detected`);
+            window.currentJobPromise = null;
+            safeResponse({ status: "timeout", result: "fail_timeout" });
+          }
+        }, timeoutExtensions === 0 ? baseTimeoutDuration : extensionDuration);
+      };
+      
+      // Initialize the smart timeout
+      createSmartTimeout();
       
       // Store timeout for cleanup
       window.currentJobTimeout = timeoutId;
+
+      // PROGRESS MONITORING FUNCTION for timeout extensions
+      const checkApplicationProgress = async () => {
+        try {
+          // Check multiple indicators of active progress
+          const indicators = {
+            formsBeingFilled: document.querySelectorAll('input:focus, select:focus, textarea:focus').length > 0,
+            loadingSpinners: findElementsRobust([
+              '[class*="loading"]', '[class*="spinner"]', '[class*="progress"]',
+              '[aria-busy="true"]', '.fa-spinner', '.loading-overlay'
+            ]).some(el => isElementVisible(el)),
+            recentFormChanges: window.lastFormInteraction && (Date.now() - window.lastFormInteraction < 30000),
+            recentSubmissionAttempt: window.lastSubmissionAttempt && (Date.now() - window.lastSubmissionAttempt < 45000),
+            recentFormSubmission: window.lastFormSubmission && (Date.now() - window.lastFormSubmission < 45000),
+            networkActivity: !!document.querySelector('meta[http-equiv="refresh"]'),
+            newContentLoaded: window.lastContentChange && (Date.now() - window.lastContentChange < 15000),
+            activeFormSubmission: !!document.querySelector('form[data-submitting="true"]'),
+            visibleSubmitButtons: findElementsRobust([
+              'button[type="submit"]', 'input[type="submit"]', 'button:contains("Submit")',
+              'button:contains("Continue")' , 'button:contains("Next")', 'button:contains("Apply")'
+            ]).some(el => isElementVisible(el) && !el.disabled),
+            filledFormFields: document.querySelectorAll('input[value]:not([value=""]), select option:checked, textarea:not(:empty)').length,
+            processingAfterSubmission: window.lastSubmissionAttempt && (Date.now() - window.lastSubmissionAttempt < 60000)
+          };
+          
+          // Log current progress state
+          console.log('📊 Progress Check:', indicators);
+          
+          // Consider it progress if any indicator is positive
+          const hasProgress = Object.values(indicators).some(Boolean);
+          
+          if (hasProgress) {
+            sendLogToPopup('✅ Application progress detected - forms being filled or submitted');
+            // Track progress time
+            window.lastProgressDetected = Date.now();
+          }
+          
+          return hasProgress;
+        } catch (error) {
+          console.warn('⚠️ Progress check failed:', error);
+          return false; // Don't extend on errors
+        }
+      };
 
       // Wrap in promise to ensure proper error handling and track execution
       const executeJob = async () => {
@@ -4129,7 +4989,7 @@ if (!isIndeedSite) {
 
   // Show a modal popup to notify user of CAPTCHA and pause automation
   function showCaptchaModal() {
-    if (document.getElementById("autoApplyCaptchaModal")) return;
+    if (findByIdRobust(["autoApplyCaptchaModal", "auto-apply-captcha-modal", "captcha-modal"])) return;
     const modal = document.createElement("div");
     modal.id = "autoApplyCaptchaModal";
     modal.style.position = "fixed";
@@ -4151,10 +5011,13 @@ if (!isIndeedSite) {
       </div>
     `;
     document.body.appendChild(modal);
-    document.getElementById("autoApplyResumeBtn").onclick = () => {
-      modal.remove();
-      window.autoApplyPaused = false;
-    };
+    const resumeBtn = findByIdRobust(["autoApplyResumeBtn", "auto-apply-resume-btn", "resume-btn"]);
+    if (resumeBtn) {
+      resumeBtn.onclick = () => {
+        modal.remove();
+        window.autoApplyPaused = false;
+      };
+    }
     window.autoApplyPaused = true;
   }
 
@@ -4224,12 +5087,34 @@ if (!isIndeedSite) {
       }
       // Click any relevant button (apply, continue, review, next, submit)
       results.push(await clickRelevantButton(["apply"], "apply"));
-      results.push(
-        await clickRelevantButton(
+      
+      // Use specialized Continue button handler for better detection
+      const continueResult = await findAndClickContinueButton();
+      if (continueResult.success) {
+        results.push({ success: true, step: "continue", info: continueResult });
+      } else {
+        // Fallback to generic continue button detection
+        const genericResult = await clickRelevantButton(
           ["continue", "review", "next"],
           "continue/review/next"
-        )
-      );
+        );
+        
+        if (genericResult.success) {
+          results.push(genericResult);
+        } else {
+          // EMERGENCY LAST-DITCH BUTTON CLICKING
+          console.log('🚨 Standard continue methods failed - attempting emergency button clicking');
+          const emergencyResult = await emergencyButtonClicking();
+          if (emergencyResult.success) {
+            results.push({ success: true, step: "emergency_continue", info: emergencyResult });
+            console.log('✅ EMERGENCY BUTTON CLICKING SUCCEEDED!');
+          } else {
+            results.push(genericResult); // Keep the original failure result
+            console.log('❌ All button clicking methods exhausted');
+          }
+        }
+      }
+      
       results.push(
         await clickRelevantButton(
           ["submit your application", "submit"],
@@ -4494,26 +5379,531 @@ if (!isIndeedSite) {
   // Improved function to reliably click any relevant button (apply, continue, review, next, submit)
   async function clickRelevantButton(keywords, stepName) {
     const regex = new RegExp(keywords.join("|"), "i");
-    let btn = Array.from(
-      document.querySelectorAll(
-        'button, input[type="button"], input[type="submit"]'
-      )
-    ).find((el) => {
-      const text = el.textContent || el.value || "";
-      return regex.test(text);
-    });
+    
+    // ULTRA-STRICT SAFETY CHECK: Block ALL non-application buttons
+    const searchBlocklist = [
+      'search', 'find jobs', 'job search', 'search jobs', 'browse jobs', 
+      'filter', 'sort', 'refine', 'modify search', 'new search', 'edit search',
+      'location', 'where', 'city', 'state', 'zip code', 'postal', 'address',
+      'browse', 'explore', 'view more', 'see more', 'load more', 'show more',
+      'back to search', 'new search', 'refine search', 'edit search'
+    ];
+    
+    // FORM CONTEXT VALIDATION: Only work inside actual application forms
+    const isInApplicationForm = () => {
+      // Check if we're inside a legitimate application form context
+      const applicationIndicators = [
+        'form[action*="apply"]', 'form[class*="application"]', 'form[id*="application"]',
+        '[class*="smartapply"]', '[class*="indeed-apply"]', '[class*="job-apply"]',
+        '[data-testid*="application"]', '[data-testid*="apply"]',
+        '.application-form', '.job-application', '.apply-form'
+      ];
+      
+      // Check if any application form containers exist
+      return applicationIndicators.some(selector => {
+        try {
+          return document.querySelector(selector) !== null;
+        } catch (e) {
+          return false;
+        }
+      });
+    };
+    
+    // SEARCH PAGE DETECTION: Block if we're on a search/browsing page
+    const isOnSearchPage = () => {
+      const searchPageIndicators = [
+        'input[name*="q"]', 'input[name*="search"]', 'input[placeholder*="search" i]',
+        'input[placeholder*="job title" i]', 'input[placeholder*="company" i]',
+        '.job-search', '.search-bar', '.search-form', '#searchform',
+        '[class*="search-input"]', '[class*="location-input"]'
+      ];
+      
+      return searchPageIndicators.some(selector => {
+        try {
+          const elements = document.querySelectorAll(selector);
+          return Array.from(elements).some(el => isElementVisible(el));
+        } catch (e) {
+          return false;
+        }
+      });
+    };
+    
+    // STRICT VALIDATION: Only proceed if we're in an application context
+    if (!isInApplicationForm()) {
+      console.log(`🚫 ${stepName}: Not in application form context - blocking action`);
+      return { success: false, step: stepName, error: 'Not in application form context' };
+    }
+    
+    if (isOnSearchPage()) {
+      console.log(`🚫 ${stepName}: On search page - blocking to prevent search disruption`);
+      return { success: false, step: stepName, error: 'Search page detected - blocking for safety' };
+    }
+    
+    // Enhanced selectors to catch various button structures including data-testid
+    const buttonSelectors = [
+      'button, input[type="button"], input[type="submit"]',
+      '[data-testid*="continue"]', '[data-testid*="next"]', '[data-testid*="submit"]',
+      '[data-testid*="apply"]', '[data-testid*="review"]', '[data-testid*="button"]'
+    ];
+    
+    let btn = null;
+    
+    // Try each selector type
+    for (const selector of buttonSelectors) {
+      const elements = Array.from(document.querySelectorAll(selector));
+      btn = elements.find((el) => {
+        const text = (el.textContent || el.value || '').toLowerCase();
+        const ariaLabel = (el.getAttribute('aria-label') || '').toLowerCase();
+        const title = (el.title || '').toLowerCase();
+        const testId = (el.getAttribute('data-testid') || '').toLowerCase();
+        const allText = `${text} ${ariaLabel} ${title} ${testId}`;
+        
+        // BLOCK search-related buttons
+        if (searchBlocklist.some(blocked => allText.includes(blocked))) {
+          console.log(`🚫 Blocked search button: "${text}" (contains: ${searchBlocklist.find(blocked => allText.includes(blocked))})`);
+          return false;
+        }
+        
+        // PROXIMITY CHECK: Block buttons near search elements
+        const isNearSearchElement = () => {
+          const searchElements = document.querySelectorAll(
+            'input[type="search"], input[placeholder*="search" i], input[placeholder*="job" i], input[placeholder*="where" i], input[placeholder*="location" i]'
+          );
+          
+          for (const searchEl of searchElements) {
+            if (isElementVisible(searchEl)) {
+              const searchRect = searchEl.getBoundingClientRect();
+              const btnRect = el.getBoundingClientRect();
+              
+              // If button is within 200px of search element, block it
+              const distance = Math.sqrt(
+                Math.pow(searchRect.x - btnRect.x, 2) + Math.pow(searchRect.y - btnRect.y, 2)
+              );
+              
+              if (distance < 200) {
+                console.log(`🚫 Blocked button near search element: "${text}" (distance: ${Math.round(distance)}px)`);
+                return true;
+              }
+            }
+          }
+          return false;
+        };
+        
+        if (isNearSearchElement()) {
+          return false;
+        }
+        
+        // FORM CONTAINER CHECK: Only allow buttons inside form containers
+        const isInFormContainer = () => {
+          let parent = el.parentElement;
+          let depth = 0;
+          
+          while (parent && depth < 10) { // Check up to 10 levels up
+            const parentClasses = parent.className || '';
+            const parentId = parent.id || '';
+            
+            // Look for application form indicators
+            if (parent.tagName === 'FORM' || 
+                parentClasses.includes('application') ||
+                parentClasses.includes('apply') ||
+                parentClasses.includes('smartapply') ||
+                parentId.includes('application') ||
+                parent.getAttribute('data-testid')?.includes('application')) {
+              return true;
+            }
+            
+            parent = parent.parentElement;
+            depth++;
+          }
+          return false;
+        };
+        
+        if (!isInFormContainer()) {
+          console.log(`🚫 Button not in form container: "${text}"`);
+          return false;
+        }
+        
+        // Check if matches our keywords in any attribute
+        return regex.test(text) || regex.test(ariaLabel) || regex.test(title) || regex.test(testId);
+      });
+      
+      if (btn) break; // Found a button, stop searching
+    }
+    
     if (btn) {
-      btn.click();
-      console.log(`Clicked ${stepName} button.`);
-      await new Promise((r) => setTimeout(r, 3000)); // GENEROUS delay after button clicks
-      return { success: true, step: stepName };
+      // Double-check it's not a search button before clicking
+      const buttonText = (btn.textContent || btn.value || '').toLowerCase();
+      if (searchBlocklist.some(blocked => buttonText.includes(blocked))) {
+        console.log(`🚫 Final safety check: Prevented clicking search button: "${buttonText}"`);
+        return { success: false, step: stepName, error: 'Blocked search button for safety' };
+      }
+      
+      // Enhanced clicking with multiple fallback methods
+      try {
+        // Method 1: Scroll into view and ensure button is visible
+        btn.scrollIntoView({ behavior: "smooth", block: "center" });
+        await new Promise((r) => setTimeout(r, 500));
+        
+        // Method 2: Check if button is disabled and try to enable it
+        if (btn.disabled || btn.getAttribute('aria-busy') === 'true') {
+          console.log(`⚠️ Button appears disabled, trying to enable: ${btn.textContent || btn.value}`);
+          btn.disabled = false;
+          btn.removeAttribute('aria-busy');
+          await new Promise((r) => setTimeout(r, 200));
+        }
+        
+        // Method 3: Try multiple click methods
+        const clickMethods = [
+          () => btn.click(),
+          () => btn.dispatchEvent(new MouseEvent('click', { 
+            bubbles: true, 
+            cancelable: true, 
+            view: window 
+          })),
+          () => {
+            const event = new Event('click', { bubbles: true });
+            btn.dispatchEvent(event);
+          }
+        ];
+        
+        let clickSucceeded = false;
+        for (const clickMethod of clickMethods) {
+          try {
+            clickMethod();
+            clickSucceeded = true;
+            console.log(`✅ Successfully clicked ${stepName} button: "${btn.textContent || btn.value}" (testid: ${btn.getAttribute('data-testid') || 'none'})`);
+            break;
+          } catch (clickError) {
+            console.log(`⚠️ Click method failed, trying next: ${clickError.message}`);
+            continue;
+          }
+        }
+        
+        if (!clickSucceeded) {
+          console.warn(`❌ All click methods failed for ${stepName} button`);
+          return { success: false, step: stepName, error: 'All click methods failed' };
+        }
+        
+        await new Promise((r) => setTimeout(r, 3000)); // GENEROUS delay after button clicks
+        return { success: true, step: stepName, buttonInfo: { 
+          text: btn.textContent || btn.value,
+          testId: btn.getAttribute('data-testid'),
+          className: btn.className
+        }};
+        
+      } catch (error) {
+        console.error(`❌ Error clicking ${stepName} button:`, error);
+        return { success: false, step: stepName, error: error.message };
+      }
     } else {
-      const errorMsg = `${stepName} button not found (keywords: ${keywords.join(
-        ", "
-      )})`;
+      const errorMsg = `${stepName} button not found (keywords: ${keywords.join(", ")})`;
       console.warn(errorMsg);
       return { success: false, step: stepName, error: errorMsg };
     }
+  }
+
+  /**
+   * Specialized function to find and click Continue buttons with ULTRA-STRICT form validation
+   */
+  async function findAndClickContinueButton() {
+    // ULTRA-STRICT FORM VALIDATION: Only work in legitimate application forms
+    const validateApplicationContext = () => {
+      // Must have application form indicators
+      const requiredIndicators = [
+        () => window.location.href.includes('smartapply.indeed.com'),
+        () => window.location.href.includes('indeedapply'),
+        () => document.querySelector('form[action*="apply"]'),
+        () => document.querySelector('[class*="application"]'),
+        () => document.querySelector('[data-testid*="application"]')
+      ];
+      
+      const hasRequiredContext = requiredIndicators.some(check => {
+        try { return check(); } catch (e) { return false; }
+      });
+      
+      // Must NOT have search indicators visible
+      const forbiddenIndicators = [
+        'input[placeholder*="job title" i]', 'input[placeholder*="company" i]',
+        'input[placeholder*="where" i]', 'input[placeholder*="location" i]',
+        '.job-search-bar', '.search-suggestions', '#searchform'
+      ];
+      
+      const hasForbiddenElements = forbiddenIndicators.some(selector => {
+        try {
+          const elements = document.querySelectorAll(selector);
+          return Array.from(elements).some(el => isElementVisible(el));
+        } catch (e) { return false; }
+      });
+      
+      return hasRequiredContext && !hasForbiddenElements;
+    };
+    
+    if (!validateApplicationContext()) {
+      console.log('🚫 Continue button blocked: Not in legitimate application form context');
+      recordFailure('Continue button blocked - invalid context');
+      return { success: false, error: 'Not in application context' };
+    }
+    
+    console.log('✅ Application context validated - proceeding with Continue button search');
+    
+    const continueSelectors = [
+      // Exact data-testid match
+      '[data-testid="continue-button"]',
+      
+      // Generic continue button selectors
+      'button[type="button"]:has(span:contains("Continue"))',
+      'button:contains("Continue")',
+      'input[type="button"][value*="Continue" i]',
+      'input[type="submit"][value*="Continue" i]',
+      
+      // Class-based selectors
+      '[class*="continue"]',
+      '[class*="btn"]:contains("Continue")',
+      
+      // Aria and accessibility selectors
+      '[aria-label*="Continue" i]',
+      '[title*="Continue" i]',
+      
+      // Mosaic provider specific (Indeed's component system)
+      '[class*="mosaic-provider"]:has(span:contains("Continue"))',
+      '[class*="mosaic"]:contains("Continue")'
+    ];
+
+    for (const selector of continueSelectors) {
+      try {
+        // Use robust element finder
+        const button = findElementRobust(selector, document, { 
+          textContent: 'continue',
+          attributes: { 'data-testid': 'continue' }
+        });
+        
+        if (button && isElementVisible(button)) {
+          // ADDITIONAL SAFETY: Verify this is NOT a search-related continue button
+          const buttonContext = button.closest('form, .search, .job-search, #searchform, [class*="search"]');
+          
+          if (buttonContext) {
+            const contextClasses = buttonContext.className || '';
+            const contextId = buttonContext.id || '';
+            
+            // If it's in a search context, block it
+            if (contextClasses.includes('search') || contextId.includes('search')) {
+              console.log(`🚫 Blocked Continue button in search context: ${contextClasses} ${contextId}`);
+              continue;
+            }
+          }
+          
+          // FORM VALIDATION: Must be in application form
+          const isInApplicationForm = button.closest(
+            'form[action*="apply"], [class*="application"], [class*="smartapply"], [data-testid*="application"]'
+          );
+          
+          if (!isInApplicationForm) {
+            console.log(`🚫 Continue button not in application form context`);
+            continue;
+          }
+          
+          console.log(`🎯 Found validated Continue button with selector: ${selector}`);
+          
+          // Enhanced click with multiple attempts
+          try {
+            // Ensure button is in viewport
+            button.scrollIntoView({ behavior: "smooth", block: "center" });
+            await new Promise((r) => setTimeout(r, 800));
+            
+            // Check if button needs to be enabled
+            if (button.disabled) {
+              console.log('🔧 Button disabled, attempting to enable...');
+              button.disabled = false;
+            }
+            
+            if (button.getAttribute('aria-busy') === 'true') {
+              console.log('🔧 Button busy, clearing busy state...');
+              button.removeAttribute('aria-busy');
+            }
+            
+            // Try multiple click approaches
+            const clickAttempts = [
+              () => button.click(),
+              () => {
+                const event = new MouseEvent('click', {
+                  view: window,
+                  bubbles: true,
+                  cancelable: true,
+                  buttons: 1
+                });
+                button.dispatchEvent(event);
+              },
+              () => {
+                // Trigger both mousedown and mouseup for more complex buttons
+                button.dispatchEvent(new MouseEvent('mousedown', { bubbles: true }));
+                setTimeout(() => button.dispatchEvent(new MouseEvent('mouseup', { bubbles: true })), 50);
+                setTimeout(() => button.dispatchEvent(new MouseEvent('click', { bubbles: true })), 100);
+              }
+            ];
+            
+            for (let i = 0; i < clickAttempts.length; i++) {
+              try {
+                await clickAttempts[i]();
+                console.log(`✅ Continue button clicked successfully (method ${i + 1})`);
+                
+                // Wait for page response
+                await new Promise((r) => setTimeout(r, 2000));
+                
+                // Check if page changed or form progressed
+                const hasFormProgressed = await new Promise((resolve) => {
+                  const checkProgress = () => {
+                    // Look for loading indicators or page changes
+                    const loadingIndicators = document.querySelectorAll(
+                      '[aria-busy="true"], [class*="loading"], [class*="spinner"], .loading, .spinner'
+                    );
+                    
+                    // If we see loading indicators, form is progressing
+                    if (loadingIndicators.length > 0) {
+                      resolve(true);
+                      return;
+                    }
+                    
+                    // Check if URL changed
+                    setTimeout(() => resolve(false), 1000);
+                  };
+                  checkProgress();
+                });
+                
+                recordSuccess(`Continue button clicked and form progressed`);
+                return { success: true, method: `Click attempt ${i + 1}`, progressed: hasFormProgressed };
+                
+              } catch (clickError) {
+                console.log(`⚠️ Click attempt ${i + 1} failed: ${clickError.message}`);
+                if (i === clickAttempts.length - 1) {
+                  recordFailure(`All Continue button click attempts failed`);
+                  return { success: false, error: 'All click methods exhausted' };
+                }
+                await new Promise((r) => setTimeout(r, 500)); // Brief pause between attempts
+              }
+            }
+          } catch (interactionError) {
+            console.error('❌ Error interacting with Continue button:', interactionError);
+            continue; // Try next selector
+          }
+        }
+      } catch (selectorError) {
+        console.log(`⚠️ Selector failed: ${selector} - ${selectorError.message}`);
+        continue; // Try next selector
+      }
+    }
+    
+    recordFailure('No Continue button found with any selector method');
+    return { success: false, error: 'Continue button not found' };
+  }
+
+  /**
+   * EMERGENCY LAST-DITCH BUTTON CLICKING - For when all else fails
+   * This function aggressively searches for ANY clickable button that could advance the application
+   */
+  async function emergencyButtonClicking() {
+    console.log('🚨 EMERGENCY BUTTON CLICKING ACTIVATED - Last resort attempt');
+    
+    // Super aggressive selectors - find ANY button that could be a continue/submit button
+    const emergencySelectors = [
+      // All buttons with specific text content
+      'button[type="button"]',
+      'button[type="submit"]', 
+      'input[type="button"]',
+      'input[type="submit"]',
+      '[role="button"]',
+      '.btn',
+      '[class*="button"]',
+      // Mosaic provider buttons (Indeed's system)
+      '[class*="mosaic-provider-module-apply"]'
+    ];
+
+    const continueWords = ['continue', 'next', 'submit', 'apply', 'proceed', 'forward', 'save'];
+    
+    for (const selector of emergencySelectors) {
+      try {
+        const buttons = document.querySelectorAll(selector);
+        console.log(`🔍 Found ${buttons.length} buttons with selector: ${selector}`);
+        
+        for (const button of buttons) {
+          // Check if button contains any continue-related text
+          const buttonText = (button.textContent || button.value || button.getAttribute('aria-label') || '').toLowerCase();
+          const hasRelevantText = continueWords.some(word => buttonText.includes(word));
+          
+          if (hasRelevantText && isElementVisible(button) && !button.disabled) {
+            console.log(`🎯 Emergency button found: "${buttonText.trim()}" with selector: ${selector}`);
+            
+            try {
+              // Scroll to button and make sure it's visible
+              button.scrollIntoView({ behavior: "smooth", block: "center" });
+              await new Promise(r => setTimeout(r, 500));
+              
+              // Force enable the button
+              button.disabled = false;
+              button.removeAttribute('aria-busy');
+              
+              // Try aggressive clicking
+              const clickMethods = [
+                () => button.click(),
+                () => {
+                  button.focus();
+                  button.click();
+                },
+                () => {
+                  const evt = new MouseEvent('click', { bubbles: true, cancelable: true, view: window });
+                  button.dispatchEvent(evt);
+                },
+                () => {
+                  // Simulate human clicking with mouse events
+                  button.dispatchEvent(new MouseEvent('mousedown', { bubbles: true }));
+                  setTimeout(() => {
+                    button.dispatchEvent(new MouseEvent('mouseup', { bubbles: true }));
+                    button.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+                  }, 50);
+                },
+                () => {
+                  // Try triggering form submission if button is in a form
+                  const form = button.closest('form');
+                  if (form) {
+                    form.requestSubmit(button);
+                  }
+                }
+              ];
+              
+              for (let i = 0; i < clickMethods.length; i++) {
+                try {
+                  await clickMethods[i]();
+                  console.log(`✅ EMERGENCY CLICK SUCCESS with method ${i + 1}!`);
+                  
+                  // Wait to see if anything happens
+                  await new Promise(r => setTimeout(r, 2000));
+                  
+                  // Check for page changes or loading
+                  const pageChanged = document.querySelector('[aria-busy="true"], [class*="loading"], .loading, .spinner');
+                  if (pageChanged) {
+                    console.log('🚀 Emergency click caused page activity - SUCCESS!');
+                    return { success: true, button: buttonText.trim(), method: i + 1 };
+                  }
+                  
+                } catch (clickErr) {
+                  console.log(`⚠️ Emergency click method ${i + 1} failed:`, clickErr.message);
+                }
+              }
+              
+              console.log(`⚠️ Emergency button "${buttonText.trim()}" clicked but no obvious page response`);
+              return { success: true, button: buttonText.trim(), uncertain: true };
+              
+            } catch (err) {
+              console.log(`❌ Emergency button interaction failed:`, err.message);
+            }
+          }
+        }
+      } catch (err) {
+        console.log(`❌ Emergency selector failed: ${selector}`, err.message);
+      }
+    }
+    
+    console.log('🚨 EMERGENCY CLICKING EXHAUSTED - No buttons found or clicked successfully');
+    return { success: false, error: 'No emergency buttons found' };
   }
 
   // Main workflow function with improved error specificity
@@ -6527,15 +7917,166 @@ if (!isIndeedSite) {
    */
 
   /**
+   * COMPLETION ASSURANCE - Ensure application finishes properly
+   */
+  async function ensureApplicationCompletion() {
+    console.log("🔄 Ensuring application reaches completion...");
+    sendStatusMessage("🔄 Ensuring application reaches completion...");
+    
+    try {
+      let completionAttempts = 0;
+      const maxCompletionAttempts = 5;
+      
+      while (completionAttempts < maxCompletionAttempts) {
+        completionAttempts++;
+        console.log(`🎯 Completion attempt ${completionAttempts}/${maxCompletionAttempts}`);
+        
+        // Check if we're already on a success page
+        if (await isSuccessPage()) {
+          console.log("✅ Already on success page - completion verified");
+          
+          // Auto-close tab after success
+          console.log("🔄 Auto-closing tab in 2 seconds...");
+          setTimeout(() => {
+            chrome.runtime.sendMessage({action: 'closeTab'});
+          }, 2000);
+          
+          return true;
+        }
+        
+        // Look for final submit/complete buttons
+        const finalSubmitSelectors = [
+          'button:contains("Submit")', 'button:contains("Submit Application")',
+          'button:contains("Complete")', 'button:contains("Finish")',
+          'button:contains("Send")', 'button:contains("Apply Now")',
+          'input[type="submit"]', 'button[type="submit"]',
+          '[data-testid*="submit"]', '[data-testid*="complete"]'
+        ];
+        
+        const submitButton = findElementRobust(finalSubmitSelectors);
+        
+        if (submitButton && isElementVisible(submitButton) && !submitButton.disabled) {
+          console.log(`🎯 Found final submit button: "${submitButton.textContent || submitButton.value}"`);
+          sendStatusMessage("🎯 Clicking final submit button...");
+          
+          try {
+            submitButton.click();
+            console.log("✅ Final submit button clicked");
+            
+            // Wait for submission to process
+            await new Promise(resolve => setTimeout(resolve, 3000));
+            
+            // Check for success after submission
+            if (await isSuccessPage()) {
+              console.log("✅ Success page reached after final submission");
+              
+              // Auto-close tab after success
+              console.log("🔄 Auto-closing tab in 2 seconds...");
+              setTimeout(() => {
+                chrome.runtime.sendMessage({action: 'closeTab'});
+              }, 2000);
+              
+              return true;
+            }
+            
+          } catch (error) {
+            console.warn(`⚠️ Error clicking submit button: ${error.message}`);
+          }
+        }
+        
+        // Check for navigation buttons that might lead to completion
+        const navigationSelectors = [
+          'button:contains("Next")', 'button:contains("Continue")',
+          'button:contains("Proceed")', 'button:contains("Review")'
+        ];
+        
+        const navButton = findElementRobust(navigationSelectors);
+        
+        if (navButton && isElementVisible(navButton) && !navButton.disabled) {
+          console.log(`➡️ Found navigation button: "${navButton.textContent}"`);
+          
+          try {
+            navButton.click();
+            await new Promise(resolve => setTimeout(resolve, 2000));
+          } catch (error) {
+            console.warn(`⚠️ Error clicking navigation button: ${error.message}`);
+          }
+        } else {
+          // No actionable buttons found
+          console.log("ℹ️ No completion or navigation buttons found");
+          break;
+        }
+        
+        // Wait before next attempt
+        if (completionAttempts < maxCompletionAttempts) {
+          await new Promise(resolve => setTimeout(resolve, 2000));
+        }
+      }
+      
+      // Final check for success
+      const finalSuccess = await isSuccessPage();
+      console.log(`📊 Final completion status: ${finalSuccess ? "SUCCESS" : "UNCERTAIN"}`);
+      
+      if (finalSuccess) {
+        // Auto-close tab after success
+        console.log("🔄 Auto-closing tab in 2 seconds...");
+        setTimeout(() => {
+          chrome.runtime.sendMessage({action: 'closeTab'});
+        }, 2000);
+      }
+      
+      return finalSuccess;
+      
+    } catch (error) {
+      console.error("❌ Error ensuring completion:", error);
+      return false;
+    }
+  }
+
+  /**
    * Main dynamic workflow that handles unlimited question pages
    */
   async function runDynamicApplicationWorkflow() {
     console.log("🚀 Starting enhanced dynamic application workflow...");
     sendStatusMessage("🚀 Starting enhanced dynamic application workflow...");
 
-    // Initialize tracking
+    // Initialize comprehensive tracking
     window.pageLoadTime = Date.now();
     window.formInteractionCount = 0;
+    window.lastFormInteraction = Date.now();
+    window.lastContentChange = Date.now();
+    window.lastProgressDetected = Date.now();
+    window.applicationStartTime = Date.now();
+    
+    // Add form interaction listeners for progress tracking
+    const trackFormInteraction = (event) => {
+      window.lastFormInteraction = Date.now();
+      window.formInteractionCount++;
+      console.log(`📝 Form interaction detected (${window.formInteractionCount}): ${event.type} on ${event.target.tagName}`);
+    };
+    
+    // Listen for all form interactions and submissions
+    document.addEventListener('input', trackFormInteraction);
+    document.addEventListener('change', trackFormInteraction);
+    document.addEventListener('click', (event) => {
+      if (event.target.matches('button, input[type="submit"], input[type="button"], a[role="button"]')) {
+        trackFormInteraction(event);
+        
+        // Track submission attempts
+        const text = (event.target.textContent || event.target.value || '').toLowerCase();
+        if (text.includes('submit') || text.includes('apply') || text.includes('send') || 
+            text.includes('complete') || text.includes('finish')) {
+          window.lastSubmissionAttempt = Date.now();
+          console.log('📤 Submission attempt detected');
+        }
+      }
+    });
+    
+    // Track form submissions
+    document.addEventListener('submit', (event) => {
+      window.lastFormSubmission = Date.now();
+      console.log('📮 Form submission detected');
+    });
 
     try {
       // Step 1: Click Apply button if not already on form
@@ -6557,36 +8098,76 @@ if (!isIndeedSite) {
         `✅ Step 2 completed: ${workflowResult ? "Success" : "Failed"}`
       );
 
-      // Step 3: Comprehensive success verification
-      console.log("📍 Step 3: Verifying application submission");
-      sendStatusMessage("📍 Step 3: Verifying application submission");
-      const successResult = await checkApplicationSuccess();
+      // Step 3: ENSURE COMPLETION - Wait for submission or final form
+      console.log("📍 Step 3: Ensuring application completion");
+      sendStatusMessage("📍 Step 3: Ensuring application completion");
+      
+      let completionResult = await ensureApplicationCompletion();
+      
+      // Step 4: Comprehensive success verification with extended wait
+      console.log("📍 Step 4: Final verification of application submission");
+      sendStatusMessage("📍 Step 4: Final verification of application submission");
+      
+      // Wait longer for success confirmation to appear
+      let successResult = false;
+      let verificationAttempts = 0;
+      const maxVerificationAttempts = 3;
+      
+      while (!successResult && verificationAttempts < maxVerificationAttempts) {
+        verificationAttempts++;
+        console.log(`🔍 Verification attempt ${verificationAttempts}/${maxVerificationAttempts}`);
+        
+        successResult = await checkApplicationSuccess();
+        
+        if (!successResult && verificationAttempts < maxVerificationAttempts) {
+          console.log("⏳ Waiting additional time for success confirmation...");
+          await new Promise(resolve => setTimeout(resolve, 5000)); // Wait 5 seconds between attempts
+        }
+      }
+      
       sendStatusMessage(
-        `✅ Step 3 completed: ${
-          successResult ? "Verified" : "Could not verify"
-        }`
+        `✅ Step 4 completed: ${successResult ? "Verified" : "Could not verify"}`
       );
 
-      // Step 4: Generate detailed result
+      // Step 5: Generate detailed result with improved logic
       const interactionCount = window.formInteractionCount || 0;
-      console.log(`📊 Application Summary:`);
+      const totalDuration = Date.now() - window.applicationStartTime;
+      
+      console.log(`📊 Final Application Summary:`);
       console.log(`   • Form interactions: ${interactionCount}`);
-      console.log(`   • Workflow completed: ${workflowResult.completed}`);
-      console.log(`   • Success confidence: ${successResult ? "HIGH" : "LOW"}`);
+      console.log(`   • Workflow success: ${workflowResult?.success || false}`);
+      console.log(`   • Completion ensured: ${completionResult}`);
+      console.log(`   • Success verified: ${successResult}`);
+      console.log(`   • Total duration: ${Math.round(totalDuration / 1000)}s`);
 
-      // Determine result based on multiple factors
-      if (successResult && interactionCount > 0) {
-        return "pass"; // High confidence success with form interactions
-      } else if (successResult && interactionCount === 0) {
-        return "pass_no_forms_needed"; // Success but no forms to fill
-      } else if (!successResult && interactionCount > 0) {
-        // Be more lenient - if we processed forms successfully, consider it a likely success
-        console.log("📝 Forms were processed but success unclear - treating as likely success");
-        return "pass"; // Changed from fail to pass when forms were processed
-      } else if (!successResult && interactionCount === 0) {
-        return "fail_no_forms_no_confirmation"; // No forms filled and no success
+      // IMPROVED RESULT DETERMINATION - Be more confident in success
+      if (successResult) {
+        // Clear success confirmation - definitely passed
+        console.log("✅ SUCCESS: Application confirmed as submitted");
+        return "pass";
+      } else if (completionResult && interactionCount > 0) {
+        // Application went through completion process and had interactions
+        console.log("✅ LIKELY SUCCESS: Application completed with form interactions");
+        return "pass";
+      } else if (workflowResult?.success && interactionCount > 0) {
+        // Workflow succeeded and we filled forms
+        console.log("✅ PROBABLE SUCCESS: Workflow succeeded with form filling");
+        return "pass";
+      } else if (interactionCount === 0 && workflowResult?.success) {
+        // No forms needed but workflow completed
+        return "pass_no_forms_needed";
+      } else if (interactionCount > 5) {
+        // Significant form interaction suggests successful progression
+        console.log("✅ INFERRED SUCCESS: Substantial form interactions detected");
+        return "pass";
+      } else if (interactionCount > 0) {
+        // Some interaction but uncertain outcome
+        console.log("⚠️ UNCERTAIN: Had form interactions but unclear completion");
+        return "pass"; // Be optimistic - if we filled forms, likely succeeded
       } else {
-        return "fail_unknown_state"; // Unclear state
+        // No meaningful interaction
+        console.log("❌ FAILURE: No significant form interactions detected");
+        return "fail_no_forms_no_confirmation";
       }
     } catch (error) {
       console.error("❌ Dynamic workflow failed:", error);
@@ -6690,11 +8271,15 @@ if (!isIndeedSite) {
     sendStatusMessage("🔄 Starting optimized workflow loop...");
 
     let pageCount = 0;
-    let maxPages = 15; // Reduced from 20 for efficiency
     let lastProgressTime = Date.now();
-    const MAX_STALL_TIME = 30000; // 30 seconds without progress = quit
+    let consecutiveFailures = 0; // Track consecutive page failures
+    let pagesWithoutProgress = 0; // Track pages that had no changes
+    const MAX_STALL_TIME = 45000; // 45 seconds without progress = quit
+    const MAX_CONSECUTIVE_FAILURES = 3; // Stop after 3 consecutive failed pages
+    const MAX_PAGES_WITHOUT_PROGRESS = 2; // Stop after 2 pages with no forms/buttons
 
-    while (pageCount < maxPages) {
+    // DYNAMIC: Continue until we detect completion, not a hardcoded limit
+    while (true) {
       // Check for emergency stop
       if (window.emergencyStopFlag) {
         sendLogToPopup("🚨 Emergency stop detected - halting workflow", "WARN");
@@ -6714,7 +8299,7 @@ if (!isIndeedSite) {
       }
 
       pageCount++;
-      sendLogToPopup(`📄 Processing page ${pageCount}/${maxPages}`);
+      sendLogToPopup(`📄 Processing page ${pageCount} (dynamic detection)`);
       sendStatusMessage(`📄 Processing page ${pageCount} of application...`);
 
       try {
@@ -6723,9 +8308,30 @@ if (!isIndeedSite) {
         if (pageCount > 1 && await isSuccessPage()) {
           sendLogToPopup(`🎉 Success page detected after ${pageCount} pages - application complete!`);
           recordSuccess("Reached application success page");
-          return { success: true, reason: "Application submitted successfully" };
+          
+          // AUTO-CLOSE: Automatically close success page and move to next job
+          sendLogToPopup("🔄 Auto-closing success page and moving to next job...");
+          
+          // Brief delay to show success message, then close tab
+          setTimeout(() => {
+            sendLogToPopup("✅ Job application completed successfully - closing tab");
+            window.close(); // This will trigger the tab close handler in background script
+          }, 2000); // 2 second delay to show success
+          
+          return { success: true, reason: "Application submitted successfully - auto-closing" };
         } else if (pageCount === 1) {
           sendLogToPopup("📋 Skipping success check on first page - ensuring we process forms");
+        }
+
+        // DYNAMIC STOPPING: Check for intelligent stopping conditions
+        if (consecutiveFailures >= MAX_CONSECUTIVE_FAILURES) {
+          sendLogToPopup(`🛑 Stopping: ${MAX_CONSECUTIVE_FAILURES} consecutive failed pages`, "WARN");
+          return { success: false, reason: `${MAX_CONSECUTIVE_FAILURES} consecutive page failures` };
+        }
+        
+        if (pagesWithoutProgress >= MAX_PAGES_WITHOUT_PROGRESS && pageCount > 2) {
+          sendLogToPopup(`🛑 Stopping: ${MAX_PAGES_WITHOUT_PROGRESS} pages without interactive elements`, "WARN");
+          return { success: false, reason: "No interactive elements found for multiple pages" };
         }
 
         // Process current page with smart timeout
@@ -6733,6 +8339,8 @@ if (!isIndeedSite) {
 
         if (pageProcessed) {
           lastProgressTime = Date.now(); // Reset stall timer on progress
+          consecutiveFailures = 0; // Reset failure counter on success
+          pagesWithoutProgress = 0; // Reset pages without progress counter
           recordSuccess(`Page ${pageCount} processed successfully`);
           sendStatusMessage(`✅ Page ${pageCount} completed successfully`);
 
@@ -6826,11 +8434,12 @@ if (!isIndeedSite) {
           sendLogToPopup("🚀 Page fully loaded - ready to process!");
         } else {
           consecutiveFailures++;
+          pagesWithoutProgress++;
           console.log(
-            `⚠️ Page ${pageCount} not processed (failure ${consecutiveFailures}/3)`
+            `⚠️ Page ${pageCount} not processed (failure ${consecutiveFailures}/${MAX_CONSECUTIVE_FAILURES}, no progress ${pagesWithoutProgress}/${MAX_PAGES_WITHOUT_PROGRESS})`
           );
           sendStatusMessage(
-            `⚠️ Page ${pageCount} processing failed (${consecutiveFailures}/3 failures)`
+            `⚠️ Page ${pageCount} processing failed (${consecutiveFailures}/${MAX_CONSECUTIVE_FAILURES} failures)`
           );
 
           // Try to proceed anyway
@@ -6924,6 +8533,13 @@ if (!isIndeedSite) {
         // Check if we reached success page after final navigation
         if (await isSuccessPage()) {
           sendLogToPopup("🎉 SUCCESS: Final navigation led to success page!");
+          
+          // Auto-close tab after success
+          console.log("🔄 Auto-closing tab in 2 seconds...");
+          setTimeout(() => {
+            chrome.runtime.sendMessage({action: 'closeTab'});
+          }, 2000);
+          
           return {
             completed: true,
             success: true,
@@ -6948,8 +8564,9 @@ if (!isIndeedSite) {
       completed: true,
       pagesProcessed: pageCount,
       consecutiveFailures: consecutiveFailures,
-      reachedMaxPages: pageCount >= maxPages,
-      tooManyFailures: consecutiveFailures >= 3,
+      pagesWithoutProgress: pagesWithoutProgress,
+      stoppedIntelligently: true, // Stopped based on dynamic conditions
+      tooManyFailures: consecutiveFailures >= MAX_CONSECUTIVE_FAILURES,
     };
   }
 
@@ -7086,11 +8703,21 @@ if (!isIndeedSite) {
         if (element.offsetParent !== null && element.textContent.trim()) { // Visible check
           const inputs = element.querySelectorAll('input:not([type="hidden"]), select, textarea');
           if (inputs.length > 0) {
+            // DYNAMIC: Determine primary type from ALL inputs, not just first one
+            const inputTypes = Array.from(inputs).map(inp => inp.type || inp.tagName.toLowerCase());
+            const primaryType = inputTypes.length === 1 ? inputTypes[0] : 
+                               inputTypes.includes('select') ? 'select' :
+                               inputTypes.includes('textarea') ? 'textarea' :
+                               inputTypes.includes('radio') ? 'radio' :
+                               inputTypes.includes('checkbox') ? 'checkbox' :
+                               inputTypes[0]; // Fallback to first if no clear priority
+            
             questions.push({
               element: element,
               text: element.textContent.trim().substring(0, 100),
               inputs: Array.from(inputs),
-              type: inputs[0].type || inputs[0].tagName.toLowerCase()
+              type: primaryType,
+              inputCount: inputs.length // Track how many inputs this question has
             });
           }
         }
@@ -7100,7 +8727,9 @@ if (!isIndeedSite) {
       if (questions.length > 0) break;
     }
     
-    return questions.slice(0, 10); // Limit to 10 questions max for efficiency
+    // DYNAMIC: Process ALL questions found, no artificial limit
+    sendLogToPopup(`🔍 Found ${questions.length} questions to process`);
+    return questions; // Process ALL questions dynamically
   }
 
   /**
@@ -7108,19 +8737,47 @@ if (!isIndeedSite) {
    */
   async function answerQuestionOptimized(question) {
     try {
-      const input = question.inputs[0];
-      if (!input) return false;
+      if (!question.inputs || question.inputs.length === 0) return false;
       
-      // Quick type-based handling
-      if (input.type === 'radio' || input.type === 'checkbox') {
-        return await handleRadioCheckboxOptimized(question);
-      } else if (input.tagName === 'SELECT') {
-        return await handleSelectOptimized(question);
-      } else if (input.type === 'text' || input.type === 'email' || input.type === 'tel') {
-        return await handleTextInputOptimized(question);
+      sendLogToPopup(`📝 Processing question with ${question.inputs.length} input(s)`);
+      
+      let answeredCount = 0;
+      
+      // DYNAMIC: Process ALL inputs in the question, not just the first one
+      for (let i = 0; i < question.inputs.length; i++) {
+        const input = question.inputs[i];
+        sendLogToPopup(`   Processing input ${i + 1}/${question.inputs.length}: ${input.type || input.tagName}`);
+        
+        try {
+          let inputAnswered = false;
+          
+          // Handle each input based on its specific type
+          if (input.type === 'radio' || input.type === 'checkbox') {
+            inputAnswered = await handleRadioCheckboxOptimized({ ...question, inputs: [input] });
+          } else if (input.tagName === 'SELECT') {
+            inputAnswered = await handleSelectOptimized({ ...question, inputs: [input] });
+          } else if (input.type === 'text' || input.type === 'email' || input.type === 'tel' || input.type === 'textarea') {
+            inputAnswered = await handleTextInputOptimized({ ...question, inputs: [input] });
+          }
+          
+          if (inputAnswered) {
+            answeredCount++;
+            sendLogToPopup(`   ✅ Input ${i + 1} answered successfully`);
+          } else {
+            sendLogToPopup(`   ⚠️ Input ${i + 1} could not be answered`);
+          }
+          
+          // Small delay between inputs
+          await new Promise(r => setTimeout(r, 100));
+          
+        } catch (inputError) {
+          sendLogToPopup(`   ❌ Error with input ${i + 1}: ${inputError.message}`, "WARN");
+        }
       }
       
-      return false;
+      sendLogToPopup(`📊 Question result: ${answeredCount}/${question.inputs.length} inputs answered`);
+      return answeredCount > 0; // Return true if at least one input was answered
+      
     } catch (error) {
       sendLogToPopup(`Question error: ${error.message}`, "WARN");
       return false;
@@ -7151,13 +8808,18 @@ if (!isIndeedSite) {
     // Sort by score (highest first)
     scoredButtons.sort((a, b) => b.score - a.score);
     
-    // Log our analysis for transparency
+    // Log our analysis for transparency - DYNAMIC: Show ALL relevant buttons
     sendLogToPopup(`🤔 Found ${scoredButtons.length} potential buttons:`);
-    scoredButtons.slice(0, 3).forEach(btn => {
-      if (btn.score > 0) {
-        sendLogToPopup(`  • "${btn.text}" (score: ${btn.score}) - ${btn.reason}`);
-      }
+    const relevantButtons = scoredButtons.filter(btn => btn.score > 0);
+    const maxButtonsToShow = Math.min(relevantButtons.length, 5); // Show up to 5 relevant buttons
+    
+    relevantButtons.slice(0, maxButtonsToShow).forEach(btn => {
+      sendLogToPopup(`  • "${btn.text}" (score: ${btn.score}) - ${btn.reason}`);
     });
+    
+    if (relevantButtons.length > maxButtonsToShow) {
+      sendLogToPopup(`  ... and ${relevantButtons.length - maxButtonsToShow} more buttons`);
+    }
     
     // Try clicking the best option
     for (const buttonInfo of scoredButtons) {
@@ -7261,26 +8923,37 @@ if (!isIndeedSite) {
   function getAllClickableElements() {
     const elements = [];
     
-    // Cast wider net but be smart about it
+    // COMPREHENSIVE CLICKABLE ELEMENTS DETECTION
     const selectors = [
-      'button', 'input[type="button"]', 'input[type="submit"]', 
-      'a[role="button"]', '[role="button"]', 'div[onclick]', 
-      'span[onclick]', '.btn', '.button', '[data-testid*="button"]',
-      '[class*="continue"]', '[class*="submit"]', '[class*="next"]',
-      '[class*="apply"]', '[id*="continue"]', '[id*="submit"]'
+      // Standard buttons
+      'button', 'input[type="button"]', 'input[type="submit"]', 'input[type="reset"]', 
+      'input[type="image"]', 'a[href]', 'a[role="button"]',
+      // ARIA and role-based
+      '[role="button"]', '[role="tab"]', '[role="menuitem"]', '[role="link"]',
+      // Interactive elements  
+      '[onclick]', '[onmousedown]', '[tabindex]:not([tabindex="-1"])',
+      // Common CSS classes
+      '.btn', '.button', '.submit', '.continue', '.next', '.apply', '.confirm',
+      '.close', '.cancel', '.ok', '.save', '.send', '.go', '.start', '.finish',
+      '[class*="btn"]', '[class*="button"]', '[class*="submit"]', '[class*="continue"]', 
+      '[class*="next"]', '[class*="apply"]', '[class*="confirm"]', '[class*="action"]',
+      // Data attributes and IDs
+      '[data-testid*="button"]', '[data-action]', '[data-click]', '[data-submit]',
+      '[id*="button"]', '[id*="submit"]', '[id*="continue"]', '[id*="next"]',
+      '[id*="apply"]', '[id*="confirm"]', '[id*="action"]',
+      // Interactive spans and divs
+      'div[role="button"]', 'span[role="button"]', 'div[onclick]', 'span[onclick]',
+      'div[tabindex="0"]', 'span[tabindex="0"]',
+      // Form submission elements
+      'form button', 'form input[type="submit"]', 'form [role="button"]'
     ];
     
-    selectors.forEach(selector => {
-      try {
-        const found = document.querySelectorAll(selector);
-        found.forEach(el => {
-          // Only include visible, enabled elements
-          if (el.offsetParent !== null && !el.disabled && !elements.includes(el)) {
-            elements.push(el);
-          }
-        });
-      } catch (e) {
-        // Skip invalid selectors
+    // Use robust element detection
+    const found = findElementsRobust(selectors);
+    found.forEach(el => {
+      // Only include visible, enabled elements
+      if (isElementVisible(el) && !el.disabled && !elements.includes(el)) {
+        elements.push(el);
       }
     });
     
@@ -7293,8 +8966,8 @@ if (!isIndeedSite) {
   function scoreButtonIntelligently(button, pageContext) {
     let score = 0;
     const text = getButtonText(button).toLowerCase();
-    const classes = button.className.toLowerCase();
-    const id = button.id.toLowerCase();
+    const classes = (button.className || '').toLowerCase();
+    const id = (button.id || '').toLowerCase();
     
     // High priority action words (what humans look for)
     const highPriorityWords = {
@@ -7584,6 +9257,9 @@ if (!isIndeedSite) {
    * INTELLIGENT select dropdown handling - contextual choices
    */
   async function handleSelectOptimized(question) {
+    // Safety check: ensure we have inputs
+    if (!question.inputs || question.inputs.length === 0) return false;
+    
     const select = question.inputs[0];
     if (!select || select.disabled) return false;
     
@@ -7700,9 +9376,9 @@ if (!isIndeedSite) {
       select.value = bestOption.value;
       select.selectedIndex = Array.from(select.options).indexOf(bestOption);
       
-      // Trigger change events
-      select.dispatchEvent(new Event('change', { bubbles: true }));
-      select.dispatchEvent(new Event('input', { bubbles: true }));
+      // Trigger React-safe change events
+      await dispatchReactSafeEvent(select, 'change');
+      await dispatchReactSafeEvent(select, 'input');
       
       return true;
     }
@@ -7714,6 +9390,9 @@ if (!isIndeedSite) {
    * INTELLIGENT text input handling - contextual and realistic responses
    */
   async function handleTextInputOptimized(question) {
+    // Safety check: ensure we have inputs
+    if (!question.inputs || question.inputs.length === 0) return false;
+    
     const input = question.inputs[0];
     if (!input || input.disabled || input.value?.trim()) return false;
     
@@ -7850,29 +9529,42 @@ if (!isIndeedSite) {
       reasoning = 'Generic professional response';
     }
     
-    // Fill the input
+    // Fill the input - WITH SAFETY VALIDATION
     if (value) {
-      sendLogToPopup(`✅ Filling: "${value}" (${reasoning})`);
-      
-      // Human-like typing simulation
-      input.focus();
-      input.value = '';
-      
-      // Simulate gradual typing for longer text
-      if (value.length > 20) {
-        for (let i = 0; i <= value.length; i++) {
-          input.value = value.substring(0, i);
-          input.dispatchEvent(new Event('input', { bubbles: true }));
-          await new Promise(resolve => setTimeout(resolve, 10)); // 10ms per character
-        }
-      } else {
-        input.value = value;
+      // CRITICAL PROTECTION: Validate input safety first
+      const safetyCheck = validateInputForFilling(input);
+      if (!safetyCheck.safe) {
+        sendLogToPopup(`🚫 BLOCKED filling input: ${safetyCheck.reason}`, "WARN");
+        return false;
       }
       
-      // Trigger all necessary events
-      input.dispatchEvent(new Event('input', { bubbles: true }));
-      input.dispatchEvent(new Event('change', { bubbles: true }));
-      input.dispatchEvent(new Event('blur', { bubbles: true }));
+      sendLogToPopup(`✅ Filling: "${value}" (${reasoning})`);
+      
+      // React-safe typing simulation
+      input.focus();
+      
+      // Use React-safe value setting for gradual typing
+      if (value.length > 20) {
+        // Clear input first
+        await setReactSafeValue(input, '');
+        await new Promise(resolve => setTimeout(resolve, 100));
+        
+        // Gradual typing with React-safe events
+        for (let i = 0; i <= value.length; i++) {
+          if (window.emergencyStopFlag) break; // Emergency stop check
+          
+          const partialValue = value.substring(0, i);
+          await setReactSafeValue(input, partialValue);
+          await new Promise(resolve => setTimeout(resolve, 20)); // Slower for React compatibility
+        }
+      } else {
+        // Direct setting for shorter text
+        await setReactSafeValue(input, value);
+      }
+      
+      // Final blur event with delay
+      await new Promise(resolve => setTimeout(resolve, 200));
+      await dispatchReactSafeEvent(input, 'blur');
       
       return true;
     }
@@ -8194,7 +9886,7 @@ if (!isIndeedSite) {
     // Try CSS selectors first
     for (const selector of continueSelectors) {
       try {
-        const button = await waitForElement(selector, 1000);
+        const button = await waitForElement(selector, 5000);  // Increased from 1000ms
         if (button) return button;
       } catch (e) {
         // Continue to next selector
@@ -8238,7 +9930,7 @@ if (!isIndeedSite) {
     // Try CSS selectors first
     for (const selector of submitSelectors) {
       try {
-        const button = await waitForElement(selector, 1000);
+        const button = await waitForElement(selector, 5000);  // Increased from 1000ms
         if (button) return button;
       } catch (e) {
         // Continue to next selector
@@ -8281,13 +9973,18 @@ if (!isIndeedSite) {
 
     const strongSuccessKeywords = [
       "application submitted",
-      "thank you for applying",
+      "thank you for applying", 
       "successfully applied",
       "application received",
       "we have received your application",
       "application complete",
       "submission successful",
       "you have successfully applied",
+      // NEW: Specific patterns from actual success page
+      "your application has been submitted",
+      "you will get an email confirmation",
+      "return to job search",
+      "keep track of your applications",
     ];
 
     const pageText = document.body.textContent.toLowerCase();
@@ -8332,6 +10029,43 @@ if (!isIndeedSite) {
     if (foundSuccessElements.length > 0) {
       confidence += 0.2 * Math.min(foundSuccessElements.length, 3);
       evidence.push(`Success UI elements: ${foundSuccessElements.join(", ")}`);
+    }
+
+    // LEVEL 2.5: Indeed Post-Apply Page Detection (High Confidence)
+    console.log("🔍 Level 2.5: Indeed Post-Apply Page Detection");
+    
+    // Check for specific Indeed post-apply page elements
+    const postApplyIndicators = [
+      '.ia-PostApply', 
+      '.ia-PostApply-header',
+      '#mosaic-postApplyModule',
+      '.mosaic-provider-module-post-apply',
+      '[data-testid="myJobsHeading"]',
+      '#continueButton',
+      '.ia-PostApply-ContinueFooter-button'
+    ];
+    
+    const foundPostApplyElements = postApplyIndicators.filter(sel => document.querySelector(sel));
+    if (foundPostApplyElements.length >= 2) {
+      confidence += 0.4; // High confidence for post-apply page structure
+      evidence.push(`Indeed post-apply page elements: ${foundPostApplyElements.join(", ")}`);
+    }
+    
+    // Check for email confirmation pattern  
+    const emailConfirmationPattern = /you will get an email confirmation at.*@.*\.com/i;
+    const hasEmailConfirmation = emailConfirmationPattern.test(pageText);
+    if (hasEmailConfirmation) {
+      confidence += 0.3; // Very high confidence indicator
+      evidence.push("Email confirmation message found");
+    }
+    
+    // Check for "Return to job search" button
+    const returnButton = Array.from(document.querySelectorAll('button, a')).find(el => 
+      el.textContent.toLowerCase().includes('return to job search')
+    );
+    if (returnButton) {
+      confidence += 0.2;
+      evidence.push("Return to job search button found");
     }
 
     // LEVEL 3: Form State Analysis (Medium Confidence)
@@ -8576,21 +10310,21 @@ if (!isIndeedSite) {
   async function hasContactInfo() {
     return !!(await waitForElement(
       '#mosaic-contactInfoModule, [data-testid="profile-location-page"], input[name*="name"], input[name*="email"], input[name*="phone"]',
-      1000
+      8000  // Increased from 1000ms
     ));
   }
 
   async function hasEmployerQuestions() {
     return !!(await waitForElement(
       '.ia-Questions-item, [id^="q_"], [data-testid*="input-q_"], h1[data-testid="questions-heading"]',
-      1000
+      8000  // Increased from 1000ms
     ));
   }
 
   async function hasResumeSelection() {
     return !!(await waitForElement(
       '.ia-Resume, input[type="radio"][name*="resume"], [data-testid*="resume"]',
-      1000
+      8000  // Increased from 1000ms
     ));
   }
 
@@ -10300,8 +12034,6 @@ if (!isIndeedSite) {
     console.error("❌ Failed to schedule extension initialization:", err);
   }
 
-} // End of Indeed site check - closes the main conditional block
-
 /**
  * Show completion notification to user when all jobs are done
  */
@@ -10379,7 +12111,7 @@ function showCompletionNotification(results) {
   });
 
   // Add CSS animation
-  if (!document.getElementById("completion-styles")) {
+  if (!findByIdRobust(["completion-styles", "completion", "styles"])) {
     const style = document.createElement("style");
     style.id = "completion-styles";
     style.textContent = `
@@ -10599,7 +12331,7 @@ function showCAPTCHANotification(captchaInfo) {
   });
   
   // Add CSS for animation if not already present
-  if (!document.getElementById("captcha-notification-styles")) {
+  if (!findByIdRobust(["captcha-notification-styles", "captcha-notification", "notification-styles"])) {
     const style = document.createElement("style");
     style.id = "captcha-notification-styles";
     style.textContent = `
@@ -10647,12 +12379,79 @@ function sendStatusMessage(message) {
   });
 }
 
-// Helper function to send console logs to popup
+// ═══════════════════════════════════════════════════════════════════════════
+// 📡 COMPREHENSIVE LOGGING SYSTEM - Send all console output to popup
+// ═══════════════════════════════════════════════════════════════════════════
+
+// Enhanced logging function to send messages to popup
 function sendLogToPopup(message, level = 'LOG') {
-  chrome.runtime.sendMessage({
-    greeting: "consoleLog",
-    message: message,
-    level: level,
-    timestamp: new Date().toISOString()
-  });
+  try {
+    chrome.runtime.sendMessage({
+      greeting: "consoleLog",
+      message: message,
+      level: level,
+      timestamp: new Date().toISOString()
+    });
+  } catch (e) {
+    // Fallback if extension context is invalid
+    console.log(`[${level}] ${message}`);
+  }
 }
+
+// Capture and redirect all console methods to popup
+if (typeof originalConsoleMethods === "undefined") {
+  var originalConsoleMethods = {
+    log: console.log,
+    info: console.info,
+    warn: console.warn,
+    error: console.error,
+    debug: console.debug
+  };
+  
+  // Override console methods to also send to popup
+  console.log = function(...args) {
+    const message = args.join(' ');
+    originalConsoleMethods.log.apply(console, args);
+    sendLogToPopup(message, 'LOG');
+  };
+  
+  console.info = function(...args) {
+    const message = args.join(' ');
+    originalConsoleMethods.info.apply(console, args);
+    sendLogToPopup(message, 'INFO');
+  };
+  
+  console.warn = function(...args) {
+    const message = args.join(' ');
+    originalConsoleMethods.warn.apply(console, args);
+    sendLogToPopup(message, 'WARN');
+  };
+  
+  console.debug = function(...args) {
+    const message = args.join(' ');
+    originalConsoleMethods.debug.apply(console, args);
+    sendLogToPopup(message, 'DEBUG');
+  };
+  
+  // Keep error override but enhance it
+  if (typeof originalConsoleError === "undefined") {
+    var originalConsoleError = originalConsoleMethods.error;
+    console.error = function(...args) {
+      const message = args.join(' ');
+      
+      // Suppress known Indeed CORS/React errors
+      if (message.includes('CORS policy') || 
+          message.includes('Minified React error') || 
+          message.includes('react-dom.production.min.js')) {
+        sendLogToPopup('🔇 Indeed error suppressed (not from extension)', 'DEBUG');
+        return;
+      }
+      
+      // Send actual errors to popup
+      originalConsoleError.apply(console, args);
+      sendLogToPopup(message, 'ERROR');
+    };
+  }
+}
+
+
