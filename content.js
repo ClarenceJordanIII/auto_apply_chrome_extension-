@@ -5501,7 +5501,7 @@ if (!isIndeedSite) {
         `📝 Found select dropdown for: "${labelText}", current value: "${select.value}"`
       );
       if (!select.value || select.value === "") {
-        const value = getSelectValue(labelText, select);
+        const value = getSelectValueLegacy(labelText, select);
         if (value) {
           select.value = value;
           select.dispatchEvent(new Event("change", { bubbles: true }));
@@ -6068,9 +6068,9 @@ if (!isIndeedSite) {
   }
 
   /**
-   * Get appropriate radio button selection based on label text
+   * Get appropriate radio button selection based on label text (Legacy version)
    */
-  function getRadioValue(labelText, radioButtons) {
+  function getRadioValueLegacy(labelText, radioButtons) {
     const text = labelText.toLowerCase();
 
     // Work authorization / visa questions - specifically about sponsorship needs
@@ -6241,9 +6241,9 @@ if (!isIndeedSite) {
   }
 
   /**
-   * Get appropriate value for select dropdowns
+   * Get appropriate value for select dropdowns (Legacy version)
    */
-  function getSelectValue(labelText, selectElement) {
+  function getSelectValueLegacy(labelText, selectElement) {
     const text = labelText.toLowerCase();
     const options = Array.from(selectElement.options);
 
