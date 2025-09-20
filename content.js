@@ -337,7 +337,7 @@ if (!isIndeedSite) {
   }
 
   // ═══════════════════════════════════════════════════════════════════════════
-  // 📋 USER CONFIGURATION LOADER - Load user data from JSON config
+  // 📋 USER CONFIGURATION LOADER - Load user data from local storage
   // ═══════════════════════════════════════════════════════════════════════════
   let userConfig = null;
 
@@ -345,20 +345,66 @@ if (!isIndeedSite) {
     if (userConfig) return userConfig; // Return cached config
 
     try {
-      const response = await fetch(chrome.runtime.getURL('questions_config.json'));
-      userConfig = await response.json();
-      console.log("✅ User configuration loaded successfully");
-      return userConfig;
+      // Load from chrome local storage
+      const result = await chrome.storage.local.get(['jobAppConfig']);
+      
+      if (result.jobAppConfig) {
+        userConfig = result.jobAppConfig;
+        console.log("✅ User configuration loaded from local storage");
+        
+        // Add learned data to storage if automation learns something new
+        if (!userConfig.learnedData) {
+          userConfig.learnedData = { patterns: [], lastUpdated: null, version: "1.0" };
+        }
+        
+        return userConfig;
+      } else {
+        // If no local storage config, try to load from JSON file as fallback (migration)
+        console.log("🔄 No local storage config found, attempting JSON file migration...");
+        try {
+          const response = await fetch(chrome.runtime.getURL('questions_config.json'));
+          const jsonConfig = await response.json();
+          
+          // Migrate to local storage
+          await chrome.storage.local.set({ 'jobAppConfig': jsonConfig });
+          userConfig = jsonConfig;
+          console.log("✅ Configuration migrated from JSON to local storage");
+          return userConfig;
+        } catch (jsonError) {
+          console.log("⚠️ JSON file not found or invalid, using minimal fallback config");
+        }
+      }
     } catch (error) {
       console.error("❌ Failed to load user configuration:", error);
-      // Return minimal fallback config
-      return {
-        personalInfo: {},
-        professionalInfo: {},
-        education: {},
-        textInputPatterns: []
-      };
     }
+    
+    // Return minimal fallback config
+    const fallbackConfig = {
+      personalInfo: {
+        email: "your.email@gmail.com",
+        phone: "(555) 123-4567"
+      },
+      professionalInfo: {
+        experience: "3-5 years",
+        availability: "Immediately"
+      },
+      education: {},
+      textInputPatterns: [],
+      numberInputPatterns: [],
+      textareaPatterns: [],
+      learnedData: { patterns: [], lastUpdated: null, version: "1.0" }
+    };
+    
+    // Save fallback to storage
+    try {
+      await chrome.storage.local.set({ 'jobAppConfig': fallbackConfig });
+      console.log("💾 Fallback configuration saved to local storage");
+    } catch (saveError) {
+      console.error("❌ Failed to save fallback configuration:", saveError);
+    }
+    
+    userConfig = fallbackConfig;
+    return userConfig;
   }
 
   // Smart value generator that uses user config instead of hardcoded values
@@ -366,17 +412,37 @@ if (!isIndeedSite) {
     const config = await loadUserConfig();
     const text = labelText.toLowerCase();
 
-    // Try to match against text input patterns first
+    // Try to match against custom patterns (new unified structure)
+    if (config.customPatterns && Array.isArray(config.customPatterns)) {
+      for (const pattern of config.customPatterns) {
+        if (pattern.keywords && pattern.keywords.some(keyword => text.includes(keyword.toLowerCase()))) {
+          // Check if input type matches or if it's a flexible pattern
+          if (!pattern.inputType || pattern.inputType === inputType || inputType === 'text') {
+            return pattern.value;
+          }
+        }
+      }
+    }
+
+    // Backward compatibility - Try legacy pattern structures
     for (const pattern of config.textInputPatterns || []) {
-      if (pattern.keywords.some(keyword => text.includes(keyword.toLowerCase()))) {
+      if (pattern.keywords && pattern.keywords.some(keyword => text.includes(keyword.toLowerCase()))) {
         return pattern.value;
       }
     }
 
-    // Fallback to direct property matches
-    const personalInfo = config.personalInfo || {};
-    const professionalInfo = config.professionalInfo || {};
-    const education = config.education || {};
+    // Handle info items structure (new format)
+    const personalInfo = Array.isArray(config.personalInfo) ? 
+      config.personalInfo.reduce((obj, item) => ({ ...obj, [item.key]: item.value }), {}) : 
+      (config.personalInfo || {});
+    
+    const professionalInfo = Array.isArray(config.professionalInfo) ? 
+      config.professionalInfo.reduce((obj, item) => ({ ...obj, [item.key]: item.value }), {}) : 
+      (config.professionalInfo || {});
+      
+    const education = Array.isArray(config.education) ? 
+      config.education.reduce((obj, item) => ({ ...obj, [item.key]: item.value }), {}) : 
+      (config.education || {});
 
     // Direct property mapping
     if (text.includes('address') || text.includes('street')) return personalInfo.address || '';
@@ -628,28 +694,24 @@ if (!isIndeedSite) {
   }
 
   /**
-   * Save learned patterns to the questions configuration
+   * Save learned patterns to the local storage configuration
    */
   async function saveLearnedPatternsToConfig(patterns) {
     try {
-      const config = await loadQuestionsConfig();
+      const config = await loadUserConfig();
 
       // Update the learned data section
       config.learnedData.patterns = patterns;
       config.learnedData.lastUpdated = new Date().toISOString();
 
-      // Since we can't write to the JSON file directly from content script,
-      // we'll save to localStorage with a backup mechanism
-      localStorage.setItem(
-        "questionsConfig_learnedData",
-        JSON.stringify(config.learnedData)
-      );
+      // Save to chrome local storage
+      await chrome.storage.local.set({ 'jobAppConfig': config });
 
       console.log(
-        `💾 Saved ${patterns.length} learned patterns to configuration`
+        `💾 Saved ${patterns.length} learned patterns to local storage`
       );
 
-      // Also send to background script for potential file writing
+      // Also send to background script for potential persistence
       if (isExtensionContextValid()) {
         chrome.runtime
           .sendMessage({
@@ -658,7 +720,7 @@ if (!isIndeedSite) {
           })
           .catch((error) => {
             console.log(
-              "Background save failed (not critical):",
+              "Background save notification failed (not critical):",
               error.message
             );
           });
@@ -672,36 +734,16 @@ if (!isIndeedSite) {
   }
 
   /**
-   * Load learned patterns from configuration (with localStorage fallback)
+   * Load learned patterns from local storage configuration
    */
   async function loadLearnedPatternsFromConfig() {
     try {
-      const config = await loadQuestionsConfig();
+      const config = await loadUserConfig();
 
-      // Check for localStorage updates first (most recent)
-      const localLearnedData = localStorage.getItem(
-        "questionsConfig_learnedData"
-      );
-      if (localLearnedData) {
-        try {
-          const parsedLocal = JSON.parse(localLearnedData);
-          if (parsedLocal.patterns && Array.isArray(parsedLocal.patterns)) {
-            console.log(
-              `📚 Loaded ${parsedLocal.patterns.length} learned patterns from localStorage`
-            );
-            return parsedLocal.patterns;
-          }
-        } catch (e) {
-          console.warn(
-            "⚠️ Invalid localStorage learned data, falling back to config file"
-          );
-        }
-      }
-
-      // Fallback to config file
+      // Get learned patterns from the config
       if (config.learnedData && config.learnedData.patterns) {
         console.log(
-          `📚 Loaded ${config.learnedData.patterns.length} learned patterns from config file`
+          `📚 Loaded ${config.learnedData.patterns.length} learned patterns from local storage`
         );
         return config.learnedData.patterns;
       }
@@ -5810,9 +5852,18 @@ if (!isIndeedSite) {
    */
   async function getTextInputValue(labelText) {
     try {
-      const config = await loadQuestionsConfig();
+      const config = await loadUserConfig();
 
-      // Find matching pattern from JSON configuration
+      // Find matching pattern from custom patterns (new structure)
+      if (config.customPatterns) {
+        const textPatterns = config.customPatterns.filter(p => p.inputType === 'text' || p.inputType === 'email' || p.inputType === 'url' || p.inputType === 'tel');
+        const matchedPattern = findPatternMatch(textPatterns, labelText);
+        if (matchedPattern) {
+          return matchedPattern.value;
+        }
+      }
+
+      // Backward compatibility - Find matching pattern from legacy structure
       const matchedPattern = findPatternMatch(
         config.textInputPatterns || [],
         labelText
@@ -5835,9 +5886,18 @@ if (!isIndeedSite) {
    */
   async function getTextareaValue(labelText) {
     try {
-      const config = await loadQuestionsConfig();
+      const config = await loadUserConfig();
 
-      // Find matching pattern from JSON configuration
+      // Find matching pattern from custom patterns (new structure)
+      if (config.customPatterns) {
+        const textareaPatterns = config.customPatterns.filter(p => p.inputType === 'textarea');
+        const matchedPattern = findPatternMatch(textareaPatterns, labelText);
+        if (matchedPattern) {
+          return matchedPattern.value;
+        }
+      }
+
+      // Backward compatibility - Find matching pattern from legacy structure
       const matchedPattern = findPatternMatch(
         config.textareaPatterns || [],
         labelText
@@ -5863,7 +5923,7 @@ if (!isIndeedSite) {
    */
   async function getNumberInputValue(labelText) {
     try {
-      const config = await loadQuestionsConfig();
+      const config = await loadUserConfig();
 
       // Find matching pattern from JSON configuration
       // For number patterns, we need special handling for experience questions with exclusions
@@ -5873,7 +5933,20 @@ if (!isIndeedSite) {
       let bestMatch = null;
       let maxMatches = 0;
 
-      for (const pattern of config.numberInputPatterns || []) {
+      // Get patterns from both new and legacy structures
+      const numberPatterns = [];
+      
+      // New structure - custom patterns with number input type
+      if (config.customPatterns) {
+        numberPatterns.push(...config.customPatterns.filter(p => p.inputType === 'number'));
+      }
+      
+      // Legacy structure - backward compatibility
+      if (config.numberInputPatterns) {
+        numberPatterns.push(...config.numberInputPatterns);
+      }
+
+      for (const pattern of numberPatterns) {
         const matchedKeywords = pattern.keywords.filter((keyword) =>
           text.includes(keyword.toLowerCase())
         );
@@ -5911,6 +5984,86 @@ if (!isIndeedSite) {
       console.error("❌ Error getting number input value from config:", error);
       // Fallback to hardcoded default
       return "1";
+    }
+  }
+
+  /**
+   * Get appropriate value for radio inputs based on label
+   */
+  async function getRadioValue(labelText) {
+    try {
+      const config = await loadUserConfig();
+
+      // Find matching pattern from custom patterns
+      if (config.customPatterns) {
+        const radioPatterns = config.customPatterns.filter(p => p.inputType === 'radio');
+        const matchedPattern = findPatternMatch(radioPatterns, labelText);
+        if (matchedPattern) {
+          return matchedPattern.value;
+        }
+      }
+
+      // Backward compatibility - check legacy radioPatterns
+      if (config.radioPatterns) {
+        const matchedPattern = findPatternMatch(config.radioPatterns, labelText);
+        if (matchedPattern) {
+          return matchedPattern.preferredValue || 'no';
+        }
+      }
+
+      // Default for common visa/sponsorship questions
+      const text = labelText.toLowerCase();
+      if (text.includes('visa') || text.includes('sponsorship') || text.includes('h-1b') || text.includes('work authorization')) {
+        return 'no';
+      }
+
+      return 'yes'; // Default radio value
+    } catch (error) {
+      console.error("❌ Error getting radio value from config:", error);
+      return 'no';
+    }
+  }
+
+  /**
+   * Get appropriate value for select dropdowns based on label
+   */
+  async function getSelectValue(labelText) {
+    try {
+      const config = await loadUserConfig();
+
+      // Find matching pattern from custom patterns
+      if (config.customPatterns) {
+        const selectPatterns = config.customPatterns.filter(p => p.inputType === 'select');
+        const matchedPattern = findPatternMatch(selectPatterns, labelText);
+        if (matchedPattern) {
+          return matchedPattern.value;
+        }
+      }
+
+      // Backward compatibility - check legacy selectPatterns
+      if (config.selectPatterns) {
+        const matchedPattern = findPatternMatch(config.selectPatterns, labelText);
+        if (matchedPattern) {
+          return matchedPattern.preferredValue;
+        }
+      }
+
+      // Smart defaults based on common patterns
+      const text = labelText.toLowerCase();
+      if (text.includes('country')) {
+        return 'United States';
+      }
+      if (text.includes('state') || text.includes('province')) {
+        return 'Texas';
+      }
+      if (text.includes('experience') || text.includes('level')) {
+        return 'Experienced';
+      }
+
+      return null; // No default selection
+    } catch (error) {
+      console.error("❌ Error getting select value from config:", error);
+      return null;
     }
   }
 

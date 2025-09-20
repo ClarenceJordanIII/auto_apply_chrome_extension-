@@ -1,6 +1,10 @@
-# 🚀 Intelligent Auto-Apply Chrome Extension
+# 🚀 Job Auto Apply Extension - Intelligent Job Application Assistant
 
-A cutting-edge Chrome extension that automates job applications on Indeed with **human-like intelligence**, real-time status tracking, live console logging, and comprehensive safety controls.
+**Transform your job search with AI-powered automation that applies to jobs with human-like intelligence.**
+
+A revolutionary Chrome extension that intelligently automates job applications on Indeed.com using advanced decision-making algorithms, contextual form analysis, and realistic human behavior patterns. Features real-time status tracking, comprehensive settings management, and transparent decision logging.
+
+**🎯 Perfect for job seekers who want to apply to more positions efficiently while maintaining quality and professionalism.**
 
 ## 🧠 **NEW: Intelligent Features**
 

@@ -1,0 +1,111 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Settings - Job Application Assistant</title>
+    <link rel="stylesheet" href="styles.css" />
+    <script src="settings.js" defer></script>
+  </head>
+  <body>
+    <div class="settings-container">
+      <div class="header">
+        <h1>Settings & Configuration</h1>
+        <a href="index.html" class="back-btn">← Back to Main</a>
+      </div>
+
+      <!-- Data Management Buttons -->
+      <div class="data-controls">
+        <button id="save-all-btn" class="start-btn">Save All Changes</button>
+        <button id="clear-all-btn" class="stop-btn">Clear All Data</button>
+        <button id="clear-learned-btn" class="settings-btn">
+          Clear Learned Data
+        </button>
+        <button id="reset-defaults-btn" class="settings-btn">
+          Reset to Defaults
+        </button>
+      </div>
+
+      <!-- Personal Information Section -->
+      <div class="settings-section">
+        <h2>👤 Personal Information</h2>
+        <p class="section-description">
+          Store your personal details that will be auto-filled in job applications (address, phone, email, etc.)
+        </p>
+        <div class="section-controls">
+          <button id="add-personal-item-btn" class="add-btn">
+            Add Personal Info Item
+          </button>
+        </div>
+        <div id="personal-info-container">
+          <!-- Personal info items will be dynamically populated -->
+        </div>
+      </div>
+
+      <!-- Professional Information Section -->
+      <div class="settings-section">
+        <h2>💼 Professional Information</h2>
+        <p class="section-description">
+          Configure your professional details for job applications (experience, skills, portfolio links, etc.)
+        </p>
+        <div class="section-controls">
+          <button id="add-professional-item-btn" class="add-btn">
+            Add Professional Info Item
+          </button>
+        </div>
+        <div id="professional-info-container">
+          <!-- Professional info items will be dynamically populated -->
+        </div>
+      </div>
+
+      <!-- Education Section -->
+      <div class="settings-section">
+        <h2>🎓 Education</h2>
+        <p class="section-description">
+          Add your educational background information (school, degree, GPA, graduation year, etc.)
+        </p>
+        <div class="section-controls">
+          <button id="add-education-item-btn" class="add-btn">
+            Add Education Item
+          </button>
+        </div>
+        <div id="education-info-container">
+          <!-- Education items will be dynamically populated -->
+        </div>
+      </div>
+
+      <!-- Custom Patterns Section -->
+      <div class="settings-section">
+        <h2>🔧 Custom Answer Patterns</h2>
+        <p class="section-description">
+          Create smart patterns to automatically fill different types of form fields based on keywords you define.
+        </p>
+
+        <div class="section-controls">
+          <button id="add-pattern-btn" class="add-btn">
+            Add Custom Pattern
+          </button>
+        </div>
+
+        <div id="custom-patterns-container">
+          <!-- Custom patterns will be dynamically added here -->
+        </div>
+      </div>
+
+      <!-- Learned Data Section -->
+      <div class="settings-section">
+        <h2>🧠 Learned Data</h2>
+        <p class="section-description">
+          Review and manage data the extension has automatically learned from your form interactions.
+        </p>
+
+        <div id="learned-data-container">
+          <!-- Learned data entries will be dynamically added here -->
+        </div>
+      </div>
+
+      <!-- Status Message -->
+      <div id="settings-status" class="settings-status"></div>
+    </div>
+  </body>
+</html>

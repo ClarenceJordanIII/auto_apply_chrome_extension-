@@ -1,0 +1,75 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="utf-8">
+    <title>Settings Test</title>
+    <meta http-equiv="Content-Security-Policy" content="script-src 'self'; object-src 'none';">
+    <link rel="stylesheet" href="styles.css">
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            margin: 20px;
+            background-color: #f5f5f5;
+        }
+        .test-result {
+            padding: 10px;
+            margin: 10px 0;
+            border-radius: 5px;
+            font-weight: bold;
+        }
+        .success {
+            background-color: #d4edda;
+            color: #155724;
+            border: 1px solid #c3e6cb;
+        }
+        .error {
+            background-color: #f8d7da;
+            color: #721c24;
+            border: 1px solid #f5c6cb;
+        }
+    </style>
+</head>
+<body>
+    <h1>Settings CSP Compliance Test</h1>
+    <div id="test-results"></div>
+    
+    <iframe src="settings.html" width="100%" height="600" style="border: 1px solid #ccc; margin-top: 20px;"></iframe>
+
+    <script>
+        // Test CSP compliance - this script should run without violations
+        document.addEventListener('DOMContentLoaded', () => {
+            const resultsDiv = document.getElementById('test-results');
+            
+            // Test 1: Check if settings.html loads without CSP violations
+            const iframe = document.querySelector('iframe');
+            iframe.onload = () => {
+                addResult('Settings page loaded successfully', 'success');
+            };
+            iframe.onerror = () => {
+                addResult('Settings page failed to load', 'error');
+            };
+            
+            // Test 2: Check if no inline event handlers exist
+            fetch('settings.html')
+                .then(response => response.text())
+                .then(html => {
+                    if (html.includes('onclick=')) {
+                        addResult('Found inline onclick handlers - CSP violation!', 'error');
+                    } else {
+                        addResult('No inline event handlers found - CSP compliant!', 'success');
+                    }
+                })
+                .catch(() => {
+                    addResult('Could not check settings.html content', 'error');
+                });
+            
+            function addResult(message, type) {
+                const div = document.createElement('div');
+                div.className = `test-result ${type}`;
+                div.textContent = message;
+                resultsDiv.appendChild(div);
+            }
+        });
+    </script>
+</body>
+</html>
