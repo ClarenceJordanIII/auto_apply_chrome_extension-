@@ -2,10 +2,20 @@
 
 ## 📖 **What Is This Extension?**
 
-The Job Auto Apply Extension is a revolutionary Chrome browser extension that uses artificial intelligence to automate job applications on Indeed.com. It's designed for job seekers who want to apply to more positions efficiently while maintaining professionalism and quality in their applications.
+The Job Auto Apply Extension is a revolutionary Chrome browser extension that puts YOU in complete control of intelligent job application automation on Indeed.com. It features a **manual start/stop system** that ensures you decide exactly when and how job applications are processed.
 
-### 🎯 **Core Purpose**
-Transform the tedious, repetitive process of filling out job application forms into an intelligent, automated workflow that thinks and responds like a professional human applicant.
+### 🎯 **Core Purpose & Control Philosophy**
+Transform the tedious, repetitive process of filling out job application forms into an intelligent, automated workflow that:
+- ✅ **Starts ONLY when you're ready** (manual start control)
+- ✅ **Processes jobs intelligently** once started (AI-powered automation)  
+- ✅ **Stops when you want** (instant stop control)
+- ✅ **Stays stopped** until you decide to start again (persistent stopping)
+
+### 🎮 **User Control Model**
+- **No Auto-Start**: Extension loads silently without interfering with browsing
+- **Manual Initiation**: Job processing begins ONLY when you click "Start"
+- **Automated Processing**: Once started, intelligently applies to ALL jobs on page
+- **Full Stop Control**: Stop instantly with "Stop" button or emergency hotkey
 
 ## 🧠 **How It Works - The Intelligence Behind It**
 

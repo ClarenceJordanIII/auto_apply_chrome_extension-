@@ -55,7 +55,7 @@
         "*://*.indeed.de/*",
         "*://*.indeed.fr/*"
       ],
-      "js": ["content.js"],
+      "js": ["debug-logger.js", "content.js"],
       "run_at": "document_idle"
     }
   ],

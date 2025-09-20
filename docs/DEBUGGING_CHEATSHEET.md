@@ -97,7 +97,50 @@ grep -c "let\|const\|var" filename.js
 
 ---
 
-## 🎯 VS Code Terminal Shortcuts
+## � **Manual Start/Stop System Debugging**
+
+### **Check Extension State**
+```javascript
+// In browser console on Indeed page:
+window.indeedExtensionReady  // Should be true when ready
+window.emergencyStopFlag     // Should be false when running
+window.formInteractionCount  // Count of form interactions
+
+// Debug extension status
+debugExtension.checkState()  // Shows complete extension status
+```
+
+### **Message System Debugging**
+```javascript
+// Test if message listener is working
+chrome.runtime.sendMessage({action: "ping"}, (response) => {
+  console.log("Response:", response);  // Should show "alive"
+});
+
+// Test start process manually  
+chrome.runtime.sendMessage({action: "startProcess"}, (response) => {
+  console.log("Start response:", response);
+});
+```
+
+### **Common Manual Start Issues**
+```bash
+# Issue: Extension auto-starts on page load
+# Fix: Check for setTimeout calls to indeedMain or startIndeed
+grep -n "setTimeout.*indeedMain\|setTimeout.*startIndeed" content.js
+
+# Issue: Learning system auto-starts
+# Fix: Check for startAutoDetection calls in initAsync
+grep -n "startAutoDetection" content.js
+
+# Issue: Message handler not receiving startProcess
+# Fix: Check message listener registration
+grep -A 10 "onMessage.addListener" content.js
+```
+
+---
+
+## �🎯 VS Code Terminal Shortcuts
 
 ### **Navigation**
 ```bash

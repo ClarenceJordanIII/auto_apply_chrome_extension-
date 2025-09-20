@@ -10,15 +10,17 @@
 ## 🎯 **Video Intro (2-3 minutes)**
 
 ### Hook & Problem Statement
-- "What if I told you that you could apply to 50+ jobs in 10 minutes?"
+- "What if I told you that you could apply to 50+ jobs in 10 minutes - but only when YOU want to?"
 - Show yourself manually applying to jobs (tedious, time-consuming)
-- "Today, we're building a Chrome extension that automates Indeed job applications"
+- "Today, we're building a Chrome extension that gives you COMPLETE CONTROL over Indeed job applications"
+- "It loads silently, starts only when you click 'Start', then intelligently processes everything"
 
 ### What We'll Build
-- ✅ Smart Chrome extension with modern popup UI
-- ✅ JSON configuration system for dynamic user data
+- ✅ Manual-control Chrome extension with modern popup UI
+- ✅ JSON configuration system for dynamic user data  
 - ✅ Real-time status updates and activity logging
-- ✅ Start/stop controls with intelligent form filling
+- ✅ Manual start/stop controls - YOU decide when it runs
+- ✅ Intelligent automated processing once started
 - ✅ Comprehensive test suite for reliability
 - ✅ Professional error handling and recovery
 

@@ -8,9 +8,9 @@ Intelligent job application automation for Indeed with AI-powered form filling a
 
 ## 📝 **Detailed Description (16,000 characters max)**
 
-### 🚀 **Revolutionize Your Job Search with AI-Powered Automation**
+### 🚀 **Revolutionize Your Job Search with Manual-Control AI Automation**
 
-The Job Auto Apply Extension is the most advanced job application automation tool available, featuring cutting-edge artificial intelligence that applies to jobs with genuinely human-like behavior. Unlike simple automation scripts, our extension understands context, makes intelligent decisions, and provides complete transparency in every action it takes.
+The Job Auto Apply Extension is the most advanced job application automation tool available, featuring **complete user control** and cutting-edge artificial intelligence. Unlike tools that run automatically, this extension waits for YOUR command and gives you full control over when job applications begin. Once started, it applies to jobs with genuinely human-like intelligence and behavior.
 
 ### ✨ **Key Features**
 
@@ -42,12 +42,14 @@ The Job Auto Apply Extension is the most advanced job application automation too
 • **Rate Limiting**: Respectful automation that won't overwhelm job sites
 • **Local Processing**: All data stays in your browser - no external servers or data collection
 
-### 🎯 **How It Works**
+### 🎯 **How It Works - Manual Control System**
 
 1. **Install & Setup**: Load the extension and configure your personal information in the settings
-2. **Navigate to Indeed**: Go to any Indeed job search results page
-3. **Start Automation**: Click the Start button in the extension popup
-4. **Monitor Progress**: Watch real-time status updates and AI decision logs
+2. **Navigate to Indeed**: Go to any Indeed job search results page (extension loads silently - NO auto-start)
+3. **Manual Start**: Click the "Start" button in the extension popup WHEN YOU'RE READY
+4. **Automated Processing**: Extension intelligently applies to ALL jobs on the page automatically
+5. **Full Control**: Stop instantly anytime with "Stop" button or emergency hotkey
+6. **Persistent Stopping**: Extension stays stopped after page refresh until you manually start again
 5. **Stay in Control**: Use emergency stop or normal stop controls anytime
 
 ### 🧠 **Intelligent Decision Examples**

@@ -49,6 +49,37 @@
       <div class="feed-container" id="feed-container">
         <!-- Timeline entries will be dynamically added here -->
       </div>
+      
+      <!-- Debug Logs Section -->
+      <div class="debug-section">
+        <div class="debug-header">
+          <h3>🐛 Debug Logs</h3>
+          <div class="debug-controls">
+            <button id="refresh-logs-btn" class="debug-btn">🔄 Refresh</button>
+            <button id="clear-logs-btn" class="debug-btn">🗑️ Clear</button>
+            <button id="export-logs-btn" class="debug-btn">📄 Export</button>
+          </div>
+        </div>
+        <div class="debug-filters">
+          <select id="log-level-filter">
+            <option value="">All Levels</option>
+            <option value="INFO">Info</option>
+            <option value="WARN">Warning</option>
+            <option value="ERROR">Error</option>
+          </select>
+          <select id="log-category-filter">
+            <option value="">All Categories</option>
+            <option value="AUTOMATION">Automation</option>
+            <option value="MESSAGE">Messages</option>
+            <option value="STARTUP">Startup</option>
+            <option value="INIT">Initialization</option>
+            <option value="ERROR">Errors</option>
+          </select>
+        </div>
+        <div class="debug-logs" id="debug-logs">
+          <div class="log-loading">Loading logs...</div>
+        </div>
+      </div>
     </div>
   </body>
 </html>

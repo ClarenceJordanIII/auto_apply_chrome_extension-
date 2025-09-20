@@ -2,7 +2,17 @@
 
 ## 📖 **Simple Explanation**
 
-The Job Auto Apply Extension is a smart Chrome browser add-on that helps you apply to jobs on Indeed.com automatically. Instead of manually filling out the same information over and over again, this extension does it for you - but with artificial intelligence that makes smart decisions like a real person would.
+The Job Auto Apply Extension is a smart Chrome browser add-on that gives you **complete control** over automated job applications on Indeed.com. It waits for YOUR command before starting, then intelligently applies to jobs using AI that makes smart decisions like a real person would.
+
+## 🎮 **Manual Control System**
+
+**Key Principle**: YOU decide when job applications start, not the extension.
+
+- ✅ **Loads Silently**: Extension ready but doesn't auto-start
+- ✅ **You Click "Start"**: Job processing begins only when YOU decide  
+- ✅ **Auto-Processes Jobs**: Once started, applies to all jobs intelligently
+- ✅ **You Click "Stop"**: Instant control to halt automation anytime
+- ✅ **Stays Stopped**: No auto-restart after refresh/reload
 
 ## 🤔 **What Problem Does It Solve?**
 
@@ -29,11 +39,12 @@ The Job Auto Apply Extension is a smart Chrome browser add-on that helps you app
 
 ## ⚡ **Key Features**
 
-### 🚀 **Automation That Actually Works**
-- Automatically fills out job application forms on Indeed.com
-- Uses artificial intelligence to make smart, contextually appropriate responses
-- Handles text fields, dropdown menus, checkboxes, and radio buttons intelligently
-- Works with different types of questions and form layouts
+### 🚀 **Manual-Control Automation That Actually Works**
+- **Manual Start**: Begins job applications ONLY when you click "Start"
+- **Intelligent Processing**: Once started, automatically fills forms on Indeed.com
+- **AI-Powered Responses**: Makes smart, contextually appropriate decisions
+- **Complete Coverage**: Handles text fields, dropdowns, checkboxes, radio buttons
+- **User Control**: Stop instantly anytime with "Stop" button
 
 ### 📊 **Real-Time Transparency**
 - Shows you exactly what it's doing as it works

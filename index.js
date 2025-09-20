@@ -199,17 +199,24 @@ startBtn.addEventListener("click", (e) => {
     console.log("Start button clicked");
     liveTogle(true);
     
-    // Send directly to content script on active tab
-    chrome.tabs.query({active: true, currentWindow: true}, (tabs) => {
-      chrome.tabs.sendMessage(tabs[0].id, {
-        action: "startProcess"
-      }, (response) => {
-        if (chrome.runtime.lastError) {
-          console.error("Error:", chrome.runtime.lastError.message);
-          liveTogle(false); // Reset status on error
-        } else if (response && response.status === "automation_started") {
-          console.log("✅ Automation started successfully");
-        }
+    // First, resume background automation if stopped
+    chrome.runtime.sendMessage({
+      action: "startAutomation"
+    }, (bgResponse) => {
+      console.log("🔧 Background automation response:", bgResponse);
+      
+      // Then send to content script on active tab
+      chrome.tabs.query({active: true, currentWindow: true}, (tabs) => {
+        chrome.tabs.sendMessage(tabs[0].id, {
+          action: "startProcess"
+        }, (response) => {
+          if (chrome.runtime.lastError) {
+            console.error("Error:", chrome.runtime.lastError.message);
+            liveTogle(false); // Reset status on error
+          } else if (response && response.status === "automation_started") {
+            console.log("✅ Automation started successfully");
+          }
+        });
       });
     });
   }
@@ -371,13 +378,22 @@ function saveExtensionStatus(isRunning, statusText, feedHistory = []) {
 
 // Restore status when popup opens
 function restoreExtensionStatus() {
-  chrome.storage.local.get(['extensionStatus'], (result) => {
+  chrome.storage.local.get(['extensionStatus', 'userStopped'], (result) => {
     if (chrome.runtime.lastError) {
       console.error("Failed to restore status:", chrome.runtime.lastError);
       return;
     }
     
     const savedStatus = result.extensionStatus;
+    const userStopped = result.userStopped;
+    
+    // If user stopped automation, always show stopped state regardless of saved status
+    if (userStopped) {
+      console.log("🛑 User previously stopped automation - showing stopped state");
+      liveTogle(false, "✅ Automation stopped by user");
+      return;
+    }
+    
     if (savedStatus) {
       console.log("📥 Restoring saved status:", savedStatus);
       
@@ -621,6 +637,115 @@ function addLogFilterControls() {
   }
 }
 
+// Debug Logs Functionality
+let currentLogs = [];
+let logLevelFilter = '';
+let logCategoryFilter = '';
+
+function loadDebugLogs() {
+  // Get active tab and request debug logs from content script
+  chrome.tabs.query({ active: true, currentWindow: true }, (tabs) => {
+    if (tabs[0]) {
+      chrome.tabs.sendMessage(tabs[0].id, {
+        action: "getDebugLogs"
+      }, (response) => {
+        if (chrome.runtime.lastError) {
+          displayDebugLogs([]);
+          console.log("Could not load debug logs:", chrome.runtime.lastError.message);
+        } else if (response && response.logs) {
+          currentLogs = response.logs;
+          displayDebugLogs(currentLogs);
+        } else {
+          displayDebugLogs([]);
+        }
+      });
+    }
+  });
+}
+
+function displayDebugLogs(logs) {
+  const debugLogsContainer = document.getElementById('debug-logs');
+  if (!debugLogsContainer) return;
+
+  if (!logs || logs.length === 0) {
+    debugLogsContainer.innerHTML = '<div class="log-empty">No debug logs available</div>';
+    return;
+  }
+
+  // Filter logs based on current filters
+  const filteredLogs = logs.filter(log => {
+    const levelMatch = !logLevelFilter || log.level === logLevelFilter;
+    const categoryMatch = !logCategoryFilter || log.category === logCategoryFilter;
+    return levelMatch && categoryMatch;
+  });
+
+  if (filteredLogs.length === 0) {
+    debugLogsContainer.innerHTML = '<div class="log-empty">No logs match current filters</div>';
+    return;
+  }
+
+  // Display filtered logs (show most recent first)
+  const logsHTML = filteredLogs.slice(-50).reverse().map(log => {
+    const timestamp = new Date(log.timestamp).toLocaleTimeString();
+    return `
+      <div class="log-entry ${log.level || 'INFO'}">
+        <div class="log-timestamp">${timestamp}</div>
+        <div>
+          <span class="log-category">[${log.category || 'GENERAL'}]</span>
+          <span class="log-level">[${log.level || 'INFO'}]</span>
+        </div>
+        <div class="log-message">${escapeHtml(log.message)}</div>
+      </div>
+    `;
+  }).join('');
+
+  debugLogsContainer.innerHTML = logsHTML;
+  
+  // Auto-scroll to bottom to show latest logs
+  debugLogsContainer.scrollTop = debugLogsContainer.scrollHeight;
+}
+
+function escapeHtml(text) {
+  const div = document.createElement('div');
+  div.textContent = text;
+  return div.innerHTML;
+}
+
+function clearDebugLogs() {
+  chrome.tabs.query({ active: true, currentWindow: true }, (tabs) => {
+    if (tabs[0]) {
+      chrome.tabs.sendMessage(tabs[0].id, {
+        action: "clearDebugLogs"
+      }, (response) => {
+        loadDebugLogs(); // Refresh the display
+      });
+    }
+  });
+}
+
+function exportDebugLogs() {
+  if (currentLogs.length === 0) {
+    alert('No logs to export');
+    return;
+  }
+
+  const logText = currentLogs.map(log => {
+    const timestamp = new Date(log.timestamp).toISOString();
+    return `[${timestamp}] [${log.category || 'GENERAL'}] [${log.level || 'INFO'}] ${log.message}`;
+  }).join('\n');
+
+  const blob = new Blob([logText], { type: 'text/plain' });
+  const url = URL.createObjectURL(blob);
+  
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = `indeed-extension-logs-${new Date().toISOString().split('T')[0]}.txt`;
+  document.body.appendChild(a);
+  a.click();
+  document.body.removeChild(a);
+  URL.revokeObjectURL(url);
+}
+
 // Initialize status restoration when popup loads
 document.addEventListener('DOMContentLoaded', () => {
   console.log("🔄 Popup loaded - restoring status...");
@@ -628,6 +753,46 @@ document.addEventListener('DOMContentLoaded', () => {
     restoreExtensionStatus();
     addLogFilterControls(); // Add log filtering controls
     applyLogLevelFilter(); // Apply current filter
+    
+    // Initialize debug logs
+    loadDebugLogs();
+    
+    // Set up debug controls
+    const refreshBtn = document.getElementById('refresh-logs-btn');
+    if (refreshBtn) {
+      refreshBtn.addEventListener('click', loadDebugLogs);
+    }
+    
+    const clearBtn = document.getElementById('clear-logs-btn');
+    if (clearBtn) {
+      clearBtn.addEventListener('click', clearDebugLogs);
+    }
+    
+    const exportBtn = document.getElementById('export-logs-btn');
+    if (exportBtn) {
+      exportBtn.addEventListener('click', exportDebugLogs);
+    }
+    
+    // Set up filter controls
+    const levelFilter = document.getElementById('log-level-filter');
+    if (levelFilter) {
+      levelFilter.addEventListener('change', (e) => {
+        logLevelFilter = e.target.value;
+        displayDebugLogs(currentLogs);
+      });
+    }
+    
+    const categoryFilter = document.getElementById('log-category-filter');
+    if (categoryFilter) {
+      categoryFilter.addEventListener('change', (e) => {
+        logCategoryFilter = e.target.value;
+        displayDebugLogs(currentLogs);
+      });
+    }
+    
+    // Auto-refresh logs every 5 seconds
+    setInterval(loadDebugLogs, 5000);
+    
   }, 100); // Small delay to ensure DOM is ready
 });
 

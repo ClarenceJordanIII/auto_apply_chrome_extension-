@@ -42,7 +42,7 @@
 
 #### **Short Description** (132 characters)
 ```
-Intelligent job application automation for Indeed with AI-powered form filling and real-time progress tracking.
+Manual-control job automation for Indeed. You decide when it starts, then it intelligently processes all applications.
 ```
 
 #### **Detailed Description** (See CHROME_STORE_DESCRIPTION.md)
